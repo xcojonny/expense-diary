@@ -70,7 +70,7 @@ def create_app() -> FastAPI:
     if settings.is_dev:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=[settings.base_url, "http://localhost:3000"],
+            allow_origins=[settings.base_url, "http://localhost:3010", "http://localhost:3000"],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

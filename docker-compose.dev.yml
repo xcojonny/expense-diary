@@ -7,9 +7,10 @@
 #   cd backend  && uv run arq app.workers.settings.WorkerSettings --watch app   # (from step 2)
 #   cd frontend && pnpm dev
 #
-# Or just: make dev-up  (see Makefile). If a host port is already taken
-# (native Postgres/Redis), override it and adjust backend/.env accordingly:
-#   make dev-up DEV_REDIS_PORT=6380
+# Or just: make dev-up  (see Makefile). Dev host ports are deliberately
+# NON-standard (55432 / 56379) so they don't clash with a native Postgres/Redis
+# on 5432/6379. Override if needed and adjust backend/.env accordingly:
+#   make dev-up DEV_REDIS_PORT=56380
 
 name: expense-dev
 
@@ -20,13 +21,14 @@ services:
       POSTGRES_USER: expense
       POSTGRES_PASSWORD: expense
       POSTGRES_DB: expense
-    ports: ["${DEV_DB_PORT:-5432}:5432"]
+    # Container listens on 5432 internally; only the HOST port is non-standard.
+    ports: ["${DEV_DB_PORT:-55432}:5432"]
     volumes:
       - dev-db:/var/lib/postgresql/data
 
   redis:
     image: redis:7
-    ports: ["${DEV_REDIS_PORT:-6379}:6379"]
+    ports: ["${DEV_REDIS_PORT:-56379}:6379"]
 
 volumes:
   dev-db:

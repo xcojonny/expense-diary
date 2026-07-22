@@ -84,12 +84,16 @@ corepack), and either Docker (for `make dev-up`) or a local PostgreSQL 16 + Redi
 ```bash
 make install          # uv sync + pnpm install; creates backend/.env
 make dev-up           # Postgres + Redis via docker-compose.dev.yml (+ expense_test DB)
-make dev-backend      # migrate + seed, then uvicorn --reload on :8000
-make dev-frontend     # Nuxt dev server on :3000 (proxies /api, /media → :8000)
+make dev-backend      # migrate + seed, then uvicorn --reload on :8010
+make dev-frontend     # Nuxt dev server on :3010 (proxies /api, /media → :8010)
 ```
 
-- API docs (dev only): http://localhost:8000/api/docs
-- Health: http://localhost:8000/api/v1/healthz · readiness: `/api/v1/readyz`
+Dev ports are deliberately **non-standard** so they don't clash with a native
+Postgres/Redis (55432 / 56379) or another local app (API :8010, frontend :3010).
+Override via `BACKEND_PORT` / `FRONTEND_PORT` / `DEV_DB_PORT` / `DEV_REDIS_PORT`.
+
+- API docs (dev only): http://localhost:8010/api/docs
+- Health: http://localhost:8010/api/v1/healthz · readiness: `/api/v1/readyz`
 
 `make check` runs exactly what CI runs (ruff + mypy + pytest, eslint + vue-tsc +
 vitest). `make help` lists every target.
@@ -102,9 +106,9 @@ Backend settings live in `backend/app/core/config.py`; template:
 | Variable | Default | Purpose |
 |---|---|---|
 | `APP_ENV` | `production` | `production` \| `development` \| `test` |
-| `BASE_URL` | `http://localhost:3000` | Public frontend URL |
-| `DATABASE_URL` | `postgresql+asyncpg://expense:expense@localhost:5432/expense` | Async Postgres DSN |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis (ARQ worker, phase 2) |
+| `BASE_URL` | `http://localhost:3000` | Public frontend URL (dev `.env`: `:3010`) |
+| `DATABASE_URL` | `…@localhost:5432/expense` (dev `.env`: `:55432`) | Async Postgres DSN |
+| `REDIS_URL` | `redis://localhost:6379/0` (dev `.env`: `:56379`) | Redis (ARQ worker + rate limits) |
 | `MEDIA_DIR` | `./.data/media` (dev) / `/data/media` (Docker) | Uploaded receipt files |
 | `DEFAULT_LOCALE` | `de` | Default UI/mail language |
 | `UPLOAD_MAX_BYTES` | `15728640` | Max receipt file size (15 MiB) |

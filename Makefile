@@ -8,15 +8,18 @@
 BACKEND  := cd backend &&
 FRONTEND := cd frontend &&
 
-# Overridable if something already listens on the default port:
-#   make dev-backend dev-frontend BACKEND_PORT=8010
-BACKEND_PORT ?= 8000
-export BACKEND_PORT
+# Dev ports are deliberately NON-standard so they don't clash with other local
+# services. Override if needed:
+#   make dev-backend dev-frontend BACKEND_PORT=8000
+BACKEND_PORT  ?= 8010   # API (uvicorn); standard 8000 avoided
+FRONTEND_PORT ?= 3010   # Nuxt dev server; standard 3000 avoided
+export BACKEND_PORT FRONTEND_PORT
 
-# Host ports of the dev infra (docker-compose.dev.yml) — override on conflicts
-# with a native Postgres/Redis; adjust backend/.env DATABASE_URL/REDIS_URL too.
-DEV_DB_PORT    ?= 5432
-DEV_REDIS_PORT ?= 6379
+# Host ports of the dev infra (docker-compose.dev.yml) — non-standard to avoid
+# a native Postgres/Redis on 5432/6379. Adjust backend/.env DATABASE_URL/REDIS_URL
+# to match if you change these.
+DEV_DB_PORT    ?= 55432
+DEV_REDIS_PORT ?= 56379
 export DEV_DB_PORT DEV_REDIS_PORT
 
 # -- Meta ----------------------------------------------------------------------
@@ -54,7 +57,7 @@ dev-backend: migrate seed ## Migrate + seed + API with auto-reload on :$(BACKEND
 	$(BACKEND) uv run uvicorn app.main:app --reload --port $(BACKEND_PORT)
 
 .PHONY: dev-frontend
-dev-frontend: ## Nuxt dev server on :3000 (proxies /api, /media → BACKEND_PORT)
+dev-frontend: ## Nuxt dev server on :$(FRONTEND_PORT) (proxies /api, /media → BACKEND_PORT)
 	$(FRONTEND) pnpm dev
 
 # -- Database ------------------------------------------------------------------

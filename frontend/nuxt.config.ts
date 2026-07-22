@@ -1,8 +1,9 @@
 import tailwindcss from '@tailwindcss/vite'
 
-// Backend port for the dev proxy — default :8000, overridable when taken
-// (see Makefile: `make dev-backend dev-frontend BACKEND_PORT=8010`).
-const backendPort = process.env.BACKEND_PORT || 8000
+// Dev ports are deliberately non-standard (avoid clashing with a local app on
+// 8000/3000); overridable via env / Makefile.
+const backendPort = process.env.BACKEND_PORT || 8010
+const frontendPort = Number(process.env.FRONTEND_PORT) || 3010
 const backend = `http://localhost:${backendPort}`
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
@@ -13,6 +14,8 @@ export default defineNuxtConfig({
 
   srcDir: 'app/',
   compatibilityDate: '2025-07-01',
+
+  devServer: { port: frontendPort },
 
   modules: ['@pinia/nuxt', '@vite-pwa/nuxt', '@nuxt/eslint'],
 
