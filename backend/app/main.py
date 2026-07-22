@@ -7,6 +7,7 @@ from arq.connections import RedisSettings
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from redis.asyncio import Redis
 
 from app.api.deps import get_current_user
 from app.api.v1 import analytics, auth, categories, groups, health, me, receipts
@@ -36,12 +37,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         log.warning("ARQ pool unavailable — using in-process BackgroundTasks", error=str(exc))
 
+    # Plain Redis for rate limiting. None ⇒ the limiter fails open.
+    app.state.redis = None
+    try:
+        app.state.redis = Redis.from_url(settings.redis_url)
+        await app.state.redis.ping()
+    except Exception as exc:
+        app.state.redis = None
+        log.warning("Redis unavailable — rate limiting disabled", error=str(exc))
+
     log.info("startup complete", env=settings.app_env, arq=app.state.arq is not None)
     try:
         yield
     finally:
         if app.state.arq is not None:
             await app.state.arq.aclose()
+        if app.state.redis is not None:
+            await app.state.redis.aclose()
 
 
 def create_app() -> FastAPI:

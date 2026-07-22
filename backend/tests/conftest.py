@@ -11,5 +11,6 @@ os.environ.setdefault("BASE_URL", "http://testserver")
 os.environ.setdefault("MEDIA_DIR", "/tmp/expense-test-media")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-bytes-long-0123456789")
 os.environ.setdefault("COOKIE_SECURE", "false")  # tests run over plain HTTP
+os.environ.setdefault("REFRESH_REUSE_GRACE_SECONDS", "0")  # deterministic reuse detection
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent

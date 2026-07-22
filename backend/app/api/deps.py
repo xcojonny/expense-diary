@@ -4,12 +4,26 @@ import jwt
 from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.ratelimit import RateLimiter
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models import User
 from app.services import group_service
 
 REFRESH_COOKIE = "refresh_token"
+
+
+def get_limiter(request: Request) -> RateLimiter:
+    return RateLimiter(getattr(request.app.state, "redis", None))
+
+
+def client_ip(request: Request) -> str | None:
+    """Best-effort client IP. Behind a reverse proxy, X-Forwarded-For's first
+    hop is the real client."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
 
 
 async def get_current_user(

@@ -139,11 +139,23 @@ Frontend types track the backend OpenAPI schema (`pnpm generate:api` →
 - **Login = magic link or OIDC (Authelia); no passwords.** Both issue the app's
   own session: short-lived JWT access token (in memory) + rotating refresh token
   (httpOnly cookie, hashed, `/auth/refresh` rotates). `COOKIE_SECURE=false` for
-  plain-HTTP dev, else the refresh cookie isn't sent. Simplifications on purpose
-  (homelab): magic links aren't browser-bound; refresh has no reuse-detection.
+  plain-HTTP dev, else the refresh cookie isn't sent.
+- **Magic links are browser-bound (Claude.ai-style pairing codes).**
+  `/auth/magic-link` sets a stable per-browser `login_request` cookie (only its
+  hash is stored on the token). Opened in the same browser → session; opened
+  elsewhere → `{status:"code"}` and the requesting browser finishes via
+  `/auth/verify-code` (code shown only on the verify page, never mailed; useless
+  without the cookie, 5 attempts/token, IP rate-limited, HMAC-derived — never
+  stored). The login page polls `/auth/login-status`. Invite links log in directly.
+- **Refresh-token reuse detection.** Rotation uses a `family_id`; presenting an
+  already-rotated token revokes the whole family — except a `REFRESH_REUSE_GRACE_SECONDS`
+  window for a parallel-tab race while the family still has a live token. Two real
+  devices each need their own login (sharing one refresh cookie trips detection).
+- **Rate limits (Redis-backed, fail-open).** `magic_link_per_email/ip`,
+  `login_code_per_ip` via `core/ratelimit.RateLimiter` (from `app.state.redis`).
 - **Mail is optional in dev.** With no `SMTP_HOST` the mailer logs the link
   (grab it from the backend log). Tests install a capturing mailer via
-  `integrations.mail.sender.set_mailer`.
+  `integrations.mail.sender.set_mailer`; integration cleanup flushes Redis.
 - **Extraction runs off the request path.** Prefer the ARQ worker; the upload
   endpoint falls back to FastAPI BackgroundTasks when Redis is down. All output
   interpretation lives in the pure `domain/extraction.py` (parse + consistency),

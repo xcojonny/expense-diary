@@ -37,10 +37,18 @@ class Settings(BaseSettings):
     initial_admin_email: EmailStr | None = None
 
     access_token_ttl_minutes: int = 15
-    refresh_token_ttl_days: int = 30
+    refresh_token_ttl_days: int = 30  # idle lifetime; every rotation extends it
+    refresh_reuse_grace_seconds: int = 60  # parallel-tab rotation race ≠ theft
     magic_link_ttl_minutes: int = 15
+    magic_link_replay_grace_seconds: int = 120  # bound browser re-loading its own link
+    magic_link_code_attempts: int = 5  # wrong pairing codes per token before it burns
     invitation_ttl_days: int = 14
     cookie_secure: bool = True  # set false for plain-HTTP local dev
+
+    # Rate limits (Redis-backed, fixed window; fail open if Redis is down)
+    magic_link_per_email: int = 5  # per 15 minutes
+    magic_link_per_ip: int = 10  # per hour
+    login_code_per_ip: int = 20  # pairing-code attempts per 15 minutes
 
     # -- SMTP (magic-link / invitation mail) -----------------------------------
     # With no host configured the mailer logs the link instead of sending — fine

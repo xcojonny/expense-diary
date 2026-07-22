@@ -4,16 +4,28 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import REFRESH_COOKIE
+from app.api.deps import REFRESH_COOKIE, client_ip, get_limiter
 from app.core.config import get_settings
+from app.core.ratelimit import RateLimiter
+from app.core.security import format_login_code
 from app.db.session import get_db
 from app.models import User
-from app.schemas.auth import AuthConfigOut, MagicLinkRequest, SessionOut, TokenRequest
-from app.services import auth_service, group_service, oidc_service
+from app.schemas.auth import (
+    AuthConfigOut,
+    CodeRequest,
+    LoginStatusResponse,
+    MagicLinkRequest,
+    SessionOut,
+    TokenRequest,
+    VerifyResponse,
+)
+from app.services import auth_service, group_service, magic_link_service, oidc_service
+from app.services.magic_link_service import VerificationError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _OIDC_STATE_COOKIE = "oidc_state"
+_LOGIN_REQUEST_COOKIE = "login_request"  # stable per-browser secret (magic-link binding)
 _COOKIE_PATH = "/api/v1/auth"
 
 
@@ -30,10 +42,30 @@ def _set_refresh_cookie(response: Response, raw: str) -> None:
     )
 
 
-async def _login(session: AsyncSession, user: User, response: Response) -> SessionOut:
-    access, raw = await auth_service.issue_session(session, user)
+def _ensure_login_request(request: Request, response: Response) -> str:
+    """Return the requesting browser's stable secret, minting + setting the
+    httpOnly cookie if absent. Only its hash is stored on the token."""
+    secret = request.cookies.get(_LOGIN_REQUEST_COOKIE)
+    if not secret:
+        secret = secrets.token_urlsafe(32)
+        response.set_cookie(
+            _LOGIN_REQUEST_COOKIE,
+            secret,
+            max_age=400 * 86400,
+            httponly=True,
+            secure=get_settings().cookie_secure,
+            samesite="lax",
+            path=_COOKIE_PATH,
+        )
+    return secret
+
+
+async def _issue(session: AsyncSession, user: User, request: Request, response: Response) -> str:
+    access, raw = await auth_service.issue_session(
+        session, user, user_agent=request.headers.get("user-agent"), ip=client_ip(request)
+    )
     _set_refresh_cookie(response, raw)
-    return SessionOut(access_token=access)
+    return access
 
 
 @router.get("/config", response_model=AuthConfigOut)
@@ -47,31 +79,83 @@ async def config() -> AuthConfigOut:
 
 @router.post("/magic-link", status_code=202)
 async def request_magic_link(
-    data: MagicLinkRequest, db: AsyncSession = Depends(get_db)
+    data: MagicLinkRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    limiter: RateLimiter = Depends(get_limiter),
 ) -> dict[str, str]:
     # Always 202 — never reveal whether the address has an account.
-    await auth_service.request_magic_link(db, str(data.email))
+    secret = _ensure_login_request(request, response)
+    await magic_link_service.request_login_link(
+        db, limiter, email=str(data.email), ip=client_ip(request), requester_secret=secret
+    )
     return {"status": "accepted"}
 
 
-@router.post("/verify", response_model=SessionOut)
+@router.post("/verify", response_model=VerifyResponse)
 async def verify(
-    data: TokenRequest, response: Response, db: AsyncSession = Depends(get_db)
+    data: TokenRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> VerifyResponse:
+    secret = request.cookies.get(_LOGIN_REQUEST_COOKIE)
+    try:
+        result = await magic_link_service.verify(db, data.token, requester_secret=secret)
+    except VerificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result.user is not None:
+        access = await _issue(db, result.user, request, response)
+        return VerifyResponse(status="session", access_token=access)
+    # Opened in a different browser → show the pairing code there.
+    return VerifyResponse(status="code", code=format_login_code(result.code or ""))
+
+
+@router.post("/login-status", response_model=LoginStatusResponse)
+async def login_status(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> LoginStatusResponse:
+    secret = request.cookies.get(_LOGIN_REQUEST_COOKIE)
+    if not secret:
+        return LoginStatusResponse(status="pending")
+    status = await magic_link_service.login_status(db, requester_secret=secret)
+    return LoginStatusResponse(status=status)
+
+
+@router.post("/verify-code", response_model=SessionOut)
+async def verify_code(
+    data: CodeRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    limiter: RateLimiter = Depends(get_limiter),
 ) -> SessionOut:
-    user = await auth_service.verify_magic_link(db, data.token)
-    if user is None:
-        raise HTTPException(status_code=400, detail="Link ungültig oder abgelaufen.")
-    return await _login(db, user, response)
+    secret = request.cookies.get(_LOGIN_REQUEST_COOKIE)
+    if not secret:
+        raise HTTPException(status_code=400, detail="Kein Anmeldevorgang in diesem Browser.")
+    if not await limiter.hit(
+        f"code:ip:{client_ip(request) or 'none'}", get_settings().login_code_per_ip, 900
+    ):
+        raise HTTPException(status_code=429, detail="Zu viele Versuche. Bitte später erneut.")
+    try:
+        user = await magic_link_service.verify_code(db, code=data.code, requester_secret=secret)
+    except VerificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SessionOut(access_token=await _issue(db, user, request, response))
 
 
 @router.post("/invitations/accept", response_model=SessionOut)
 async def accept_invitation(
-    data: TokenRequest, response: Response, db: AsyncSession = Depends(get_db)
+    data: TokenRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ) -> SessionOut:
     user = await group_service.accept_invitation(db, data.token)
     if user is None:
         raise HTTPException(status_code=400, detail="Einladung ungültig oder abgelaufen.")
-    return await _login(db, user, response)
+    return SessionOut(access_token=await _issue(db, user, request, response))
 
 
 @router.post("/refresh", response_model=SessionOut)
@@ -81,8 +165,11 @@ async def refresh(
     raw = request.cookies.get(REFRESH_COOKIE)
     if not raw:
         raise HTTPException(status_code=401, detail="Keine Sitzung.")
-    rotated = await auth_service.rotate_refresh(db, raw)
+    rotated = await auth_service.rotate_refresh_token(
+        db, raw, user_agent=request.headers.get("user-agent"), ip=client_ip(request)
+    )
     if rotated is None:
+        response.delete_cookie(REFRESH_COOKIE, path=_COOKIE_PATH)
         raise HTTPException(status_code=401, detail="Sitzung abgelaufen.")
     access, new_raw = rotated
     _set_refresh_cookie(response, new_raw)
@@ -93,7 +180,7 @@ async def refresh(
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)) -> None:
     raw = request.cookies.get(REFRESH_COOKIE)
     if raw:
-        await auth_service.revoke_refresh(db, raw)
+        await auth_service.revoke_refresh_token(db, raw)
     response.delete_cookie(REFRESH_COOKIE, path=_COOKIE_PATH)
 
 
@@ -139,11 +226,11 @@ async def oidc_callback(
             email=info["email"],
             display_name=info["display_name"],
         )
-        _access, raw = await auth_service.issue_session(db, user)
+        _access, raw = await auth_service.issue_session(
+            db, user, user_agent=request.headers.get("user-agent"), ip=client_ip(request)
+        )
     except Exception:
         return RedirectResponse(f"{settings.base_url}/login?error=sso", status_code=307)
-    # Set the refresh cookie and bounce to the frontend, which bootstraps an
-    # access token via /auth/refresh.
     response = RedirectResponse(f"{settings.base_url}/login?sso=ok", status_code=307)
     _set_refresh_cookie(response, raw)
     response.delete_cookie(_OIDC_STATE_COOKIE, path=_COOKIE_PATH)

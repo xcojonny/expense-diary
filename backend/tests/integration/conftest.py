@@ -47,6 +47,9 @@ def _database() -> None:
 async def _clean_state() -> AsyncIterator[None]:
     """Pristine state before each test: no users/groups/receipts and the seeded
     category tree only. Deleting groups/users cascades all owned rows."""
+    from redis.asyncio import Redis
+
+    from app.core.config import get_settings
     from app.db.session import get_sessionmaker
     from app.seed import seed_categories
 
@@ -58,6 +61,14 @@ async def _clean_state() -> AsyncIterator[None]:
         await session.execute(sa.text("DELETE FROM categories"))
         await session.commit()
         await seed_categories(session)
+
+    # Reset rate-limit counters so tests are deterministic across runs.
+    try:
+        redis = Redis.from_url(get_settings().redis_url)
+        await redis.flushdb()
+        await redis.aclose()
+    except Exception:
+        pass
     yield
 
 
@@ -79,6 +90,17 @@ def _make_client(app: object) -> httpx.AsyncClient:
 @pytest.fixture
 async def anon_client(_clean_state: None) -> AsyncIterator[httpx.AsyncClient]:
     """Unauthenticated client (for the auth flows themselves)."""
+    from app.main import create_app
+
+    app = create_app()
+    async with app.router.lifespan_context(app), _make_client(app) as client:
+        yield client
+
+
+@pytest.fixture
+async def second_client(_clean_state: None) -> AsyncIterator[httpx.AsyncClient]:
+    """A second, independent unauthenticated client (own cookie jar) — models
+    a different browser for the cross-browser pairing-code flow."""
     from app.main import create_app
 
     app = create_app()

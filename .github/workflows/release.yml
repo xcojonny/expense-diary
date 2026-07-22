@@ -68,3 +68,38 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+  deploy:
+    name: Deploy (HMAC webhook, pull-based)
+    runs-on: ubuntu-latest
+    needs: build
+    if: >-
+      ${{ always() && needs.build.result == 'success'
+          && ((github.event_name == 'workflow_run'
+               && github.event.workflow_run.event == 'push'
+               && github.event.workflow_run.conclusion == 'success')
+              || github.event_name == 'workflow_dispatch'
+              || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - name: Trigger deploy webhook (HMAC-signed, replay-protected)
+        env:
+          WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WEBHOOK_URL:-}" ] || [ -z "${WEBHOOK_SECRET:-}" ]; then
+            echo "No deploy webhook configured (DEPLOY_WEBHOOK_URL/SECRET) — skipping."
+            exit 0
+          fi
+          body=$(printf '{"sha":"%s","timestamp":%d}' "${RELEASE_SHA}" "$(date +%s)")
+          sig=$(printf '%s' "${body}" | openssl dgst -sha256 -hmac "${WEBHOOK_SECRET}" | sed 's/^.* /sha256=/')
+          # The webhook runs synchronously (compose pull && up -d --wait) and can
+          # take a while / return 500 on failure — allow a generous timeout.
+          code=$(curl -sS -o /tmp/resp.txt -w '%{http_code}' -m 300 \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: ${sig}" \
+            -d "${body}" "${WEBHOOK_URL}")
+          cat /tmp/resp.txt || true
+          echo "HTTP ${code}"
+          test "${code}" = "200"

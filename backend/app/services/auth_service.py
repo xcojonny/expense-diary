@@ -1,22 +1,28 @@
-"""Authentication use-cases: initial-admin bootstrap, magic-link login, session
-issuance/rotation, and OIDC user provisioning.
+"""Authentication use-cases: initial-admin bootstrap, session issuance with
+rotating refresh tokens (family reuse-detection), and OIDC provisioning.
 
-Simplifications vs. a public SaaS (documented on purpose): magic links are
-single-use + short-lived but not browser-bound (no pairing codes); refresh
-tokens rotate and are revocable but there is no family reuse-detection. Both are
-proportionate for a private homelab and can harden later.
+Magic-link logic lives in ``magic_link_service``. Simplification vs. a public
+SaaS, on purpose for a homelab: OIDC id_tokens aren't signature-verified (we call
+userinfo over TLS instead).
 """
 
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.core.security import create_access_token, generate_token, hash_token
-from app.integrations.mail.sender import Email, send_mail
-from app.models import Group, GroupMember, MagicLinkToken, OidcIdentity, RefreshToken, User
+from app.models import Group, GroupMember, OidcIdentity, RefreshToken, User
+
+log = get_logger(__name__)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
@@ -95,113 +101,102 @@ async def ensure_initial_admin(session: AsyncSession) -> None:
     await session.commit()
 
 
-# -- Magic link ---------------------------------------------------------------
+# -- Sessions (rotating refresh with reuse detection) -------------------------
 
 
-async def request_magic_link(session: AsyncSession, email: str) -> None:
-    """Create + email a login link for an active user. Silent no-op otherwise
-    (no account enumeration). Callers always return 202."""
-    user = await get_user_by_email(session, email)
-    if user is None or user.status != "active":
-        return
-    settings = get_settings()
-    raw = generate_token()
-    session.add(
-        MagicLinkToken(
-            email=email,
-            user_id=user.id,
-            token_hash=hash_token(raw),
-            expires_at=datetime.now(UTC) + timedelta(minutes=settings.magic_link_ttl_minutes),
-        )
-    )
-    await session.commit()
-    link = f"{settings.base_url}/login?token={raw}"
-    await send_mail(
-        Email(
-            to=email,
-            subject="Dein Anmeldelink fürs Haushaltsbuch",
-            text=f"Hallo,\n\nmit diesem Link meldest du dich an:\n{link}\n\n"
-            f"Der Link ist {settings.magic_link_ttl_minutes} Minuten gültig.",
-        )
-    )
-
-
-async def verify_magic_link(session: AsyncSession, raw: str) -> User | None:
-    token = (
-        await session.execute(
-            select(MagicLinkToken).where(MagicLinkToken.token_hash == hash_token(raw))
-        )
-    ).scalar_one_or_none()
-    if token is None or token.used_at is not None:
-        return None
-    if token.expires_at < datetime.now(UTC):
-        return None
-    if token.user_id is None:
-        return None
-    user = await session.get(User, token.user_id)
-    if user is None or user.status != "active":
-        return None
-    token.used_at = datetime.now(UTC)
-    user.last_login_at = datetime.now(UTC)
-    await session.commit()
-    return user
-
-
-# -- Sessions -----------------------------------------------------------------
-
-
-async def issue_session(session: AsyncSession, user: User) -> tuple[str, str]:
-    """Return (access_token JWT, raw refresh token). The refresh token's hash is
+async def issue_session(
+    session: AsyncSession,
+    user: User,
+    *,
+    user_agent: str | None = None,
+    ip: str | None = None,
+    family_id: uuid.UUID | None = None,
+) -> tuple[str, str]:
+    """Return (access_token JWT, raw refresh token). Only the refresh hash is
     stored; the raw value goes into an httpOnly cookie by the caller."""
     settings = get_settings()
     raw = generate_token()
-    session.add(
-        RefreshToken(
-            user_id=user.id,
-            token_hash=hash_token(raw),
-            expires_at=datetime.now(UTC) + timedelta(days=settings.refresh_token_ttl_days),
-        )
+    token = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(raw),
+        expires_at=_now() + timedelta(days=settings.refresh_token_ttl_days),
+        user_agent=(user_agent or "")[:300] or None,
+        ip=ip,
     )
+    if family_id is not None:
+        token.family_id = family_id
+    session.add(token)
+    user.last_login_at = _now()
     await session.commit()
-    access = create_access_token(user.id, is_instance_admin=user.is_instance_admin)
-    return access, raw
+    return create_access_token(user.id, is_instance_admin=user.is_instance_admin), raw
 
 
-async def rotate_refresh(session: AsyncSession, raw: str) -> tuple[str, str] | None:
-    """Validate + rotate a refresh token. Returns (access, new_raw) or None."""
+async def rotate_refresh_token(
+    session: AsyncSession, raw: str, *, user_agent: str | None = None, ip: str | None = None
+) -> tuple[str, str] | None:
+    """Rotate a refresh token. Presenting an already-rotated (revoked) token is
+    treated as theft and revokes the whole family — except a brief grace window
+    for a parallel-tab rotation race while the family still has a live token.
+    Returns (access, new_raw) or None."""
+    settings = get_settings()
     token = (
         await session.execute(
             select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw))
         )
     ).scalar_one_or_none()
-    now = datetime.now(UTC)
-    if token is None or token.revoked_at is not None or token.expires_at < now:
+    if token is None:
         return None
+
+    if token.revoked_at is not None:
+        grace = timedelta(seconds=settings.refresh_reuse_grace_seconds)
+        family_alive = await session.scalar(
+            select(
+                sa.exists().where(
+                    RefreshToken.family_id == token.family_id,
+                    RefreshToken.revoked_at.is_(None),
+                )
+            )
+        )
+        if not family_alive or token.revoked_at <= _now() - grace:
+            await session.execute(
+                sa.update(RefreshToken)
+                .where(
+                    RefreshToken.family_id == token.family_id,
+                    RefreshToken.revoked_at.is_(None),
+                )
+                .values(revoked_at=_now())
+            )
+            await session.commit()
+            log.warning("refresh reuse — family revoked", family_id=str(token.family_id))
+            return None
+        log.info("refresh reuse within grace", family_id=str(token.family_id), ip=ip)
+    elif token.expires_at < _now():
+        return None
+
     user = await session.get(User, token.user_id)
     if user is None or user.status != "active":
         return None
-    token.revoked_at = now
-    token.last_used_at = now
-    new_raw = generate_token()
-    session.add(
-        RefreshToken(
-            user_id=user.id,
-            token_hash=hash_token(new_raw),
-            expires_at=now + timedelta(days=get_settings().refresh_token_ttl_days),
-        )
+
+    token.revoked_at = token.revoked_at or _now()
+    token.last_used_at = _now()
+    return await issue_session(
+        session, user, user_agent=user_agent, ip=ip, family_id=token.family_id
     )
-    await session.commit()
-    return create_access_token(user.id, is_instance_admin=user.is_instance_admin), new_raw
 
 
-async def revoke_refresh(session: AsyncSession, raw: str) -> None:
+async def revoke_refresh_token(session: AsyncSession, raw: str) -> None:
+    """Logout: revoke the whole family of the presented token."""
     token = (
         await session.execute(
             select(RefreshToken).where(RefreshToken.token_hash == hash_token(raw))
         )
     ).scalar_one_or_none()
-    if token is not None and token.revoked_at is None:
-        token.revoked_at = datetime.now(UTC)
+    if token is not None:
+        await session.execute(
+            sa.update(RefreshToken)
+            .where(RefreshToken.family_id == token.family_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=_now())
+        )
         await session.commit()
 
 
@@ -224,7 +219,6 @@ async def upsert_oidc_user(
     if identity is not None:
         user = await session.get(User, identity.user_id)
         if user is not None:
-            user.last_login_at = datetime.now(UTC)
             await ensure_personal_group(session, user)
             await session.commit()
             return user
@@ -236,8 +230,8 @@ async def upsert_oidc_user(
         )
     elif user.status == "pending":
         user.status = "active"
+    user.email_verified_at = user.email_verified_at or _now()
     session.add(OidcIdentity(user_id=user.id, issuer=issuer, subject=subject))
-    user.last_login_at = datetime.now(UTC)
     await ensure_personal_group(session, user)
     await session.commit()
     return user

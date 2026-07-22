@@ -183,9 +183,9 @@ Frontend formatiert (kein Float-Rundungsfehler).
 - Kategorie-Hierarchie: geseedet (Top-Level = die vom Prompt vergebenen
   Kategorien, plus einige Unterkategorien) und via CRUD verwaltbar (Phase 5,
   siehe §7). Tiefe ist nicht begrenzt.
-- Session-Härtung: Refresh-Rotation ist da, aber ohne Family-Reuse-Detection;
-  Magic-Links sind Single-Use + kurzlebig, aber nicht browser-gebunden. Für ein
-  privates Homelab bewusst proportioniert (siehe §8).
+- Session-Härtung ist auf cooking-jonelli-Niveau: browser-gebundene Magic-Links
+  mit Pairing-Codes, Redis-Rate-Limits und Refresh-Reuse-Detection (Family-Kill).
+  Siehe §6.1.
 
 ## 7. Kategorien-Verwaltung (Phase 5)
 
@@ -224,11 +224,23 @@ Die **Gruppe (Haushalt)** ist die Mandantengrenze. Nutzer gehören über
 
 Kein Passwort. Zwei Wege, beide stellen die **App-eigene** Session aus
 (kurzlebiges JWT-Access-Token im Speicher + rotierendes Refresh-Token als
-httpOnly-Cookie, hash-gespeichert, `/auth/refresh` rotiert, `/auth/logout` widerruft):
+httpOnly-Cookie, hash-gespeichert, `/auth/refresh` rotiert, `/auth/logout` widerruft).
+**Refresh-Reuse-Detection:** jede Rotation gehört zu einer `family_id`; wird ein
+bereits rotiertes Token erneut vorgezeigt, wird die ganze Familie widerrufen
+(Diebstahl-Abwehr) — Ausnahme ist ein kurzes Grace-Fenster
+(`REFRESH_REUSE_GRACE_SECONDS`) für Parallel-Tab-Rotationsraces, solange die
+Familie noch ein lebendes Token hat.
 
 - **Magic-Link** (`/auth/magic-link` → Mail → `/auth/verify`): Single-Use,
-  kurzlebig. Kein User-Enumeration (immer 202). Mail via SMTP; ohne
-  `SMTP_HOST` loggt der Mailer den Link (Dev).
+  kurzlebig, **browser-gebunden** (Claude.ai-Prinzip). `/auth/magic-link` setzt
+  ein stabiles `login_request`-Cookie (nur dessen Hash landet am Token). Öffnet
+  man den Link im selben Browser → Session; woanders → `{status:"code", code}`,
+  und der ursprüngliche Browser schließt über `/auth/verify-code` ab (der Code
+  steht nie in der Mail, nur auf der Verify-Seite; nutzlos ohne das Cookie,
+  5 Fehlversuche pro Token, IP-Rate-Limit, HMAC-abgeleitet — nie gespeichert).
+  Die Login-Seite pollt `/auth/login-status`. Kein User-Enumeration (immer 202,
+  Redis-Rate-Limits pro E-Mail/IP). Mail via SMTP; ohne `SMTP_HOST` loggt der
+  Mailer den Link (Dev).
 - **OIDC / Authelia** (`/auth/oidc/login` → Authelia → `/auth/oidc/callback`):
   Authorization-Code-Flow mit vertraulichem Client (`services/oidc_service`),
   State-Cookie gegen CSRF, Userinfo über TLS. `upsert_oidc_user` verknüpft
@@ -262,7 +274,15 @@ Backend-ENV: `OIDC_ISSUER=https://auth.example.org`, `OIDC_CLIENT_ID`,
 `.github/workflows/release.yml` baut nach grüner CI auf `main` (sowie auf
 `v*`-Tags / manuell) die Images `ghcr.io/<owner>/expense-diary-{backend,frontend}`
 (Tags `latest`, `sha-<sha>`, bei Tags `semver`) und schiebt sie nach GHCR; das
-Git-SHA wird als `GIT_SHA` eingebacken (`/api/v1/version`). Deployment zieht diese
-Images über `deploy/docker-compose.yml` (Reverse-Proxy davor für TLS + Routing
-`/api`,`/media` → Backend, Rest → Frontend). Das konkrete Deploy-Verfahren
-(z. B. Webhook/`docker compose pull`) bleibt der Homelab-Umgebung überlassen.
+Git-SHA wird als `GIT_SHA` eingebacken (`/api/v1/version`).
+
+**Pull-Deploy per Webhook** (wie cooking-jonelli, `deploy/infra/webhook/`): der
+`deploy`-Job schickt nach grüner CI einen **HMAC-SHA256-signierten**
+`{sha, timestamp}`-Body an `DEPLOY_WEBHOOK_URL` (`X-Hub-Signature-256`, verifiziert
+gegen `DEPLOY_WEBHOOK_SECRET`). Der [`webhook`](https://github.com/adnanh/webhook)-
+Container ruft `deploy.sh` auf: Replay-Schutz (>5 min verworfen), `flock`,
+`IMAGE_TAG=sha-<commit>` in der App-`.env`, `docker compose pull && up -d --wait`,
+**Auto-Rollback** auf den vorherigen Tag bei nicht-healthy Zustand, optionale
+ntfy-Benachrichtigung. Ohne gesetzte Secrets ist der Deploy-Job ein No-op.
+Reverse-Proxy davor für TLS + Routing `/api`,`/media` → Backend, Rest → Frontend.
+Details: `deploy/README.md`.

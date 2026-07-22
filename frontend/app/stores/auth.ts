@@ -55,10 +55,29 @@ export const useAuthStore = defineStore('auth', () => {
     await $fetch('/api/v1/auth/magic-link', { method: 'POST', body: { email } })
   }
 
-  async function verify(token: string): Promise<void> {
-    const s = await $fetch<Session>('/api/v1/auth/verify', { method: 'POST', body: { token } })
+  // Verifying a link either logs this browser in (bound browser → session) or
+  // returns a pairing code to type into the requesting browser.
+  async function verify(token: string): Promise<{ status: string; code?: string }> {
+    const r = await $fetch<{ status: string; access_token?: string; code?: string }>(
+      '/api/v1/auth/verify',
+      { method: 'POST', body: { token } },
+    )
+    if (r.status === 'session' && r.access_token) {
+      accessToken.value = r.access_token
+      await fetchMe()
+    }
+    return { status: r.status, code: r.code }
+  }
+
+  async function verifyCode(code: string): Promise<void> {
+    const s = await $fetch<Session>('/api/v1/auth/verify-code', { method: 'POST', body: { code } })
     accessToken.value = s.access_token
     await fetchMe()
+  }
+
+  async function loginStatus(): Promise<string> {
+    const r = await $fetch<{ status: string }>('/api/v1/auth/login-status', { method: 'POST' })
+    return r.status
   }
 
   async function acceptInvite(token: string): Promise<void> {
@@ -95,6 +114,8 @@ export const useAuthStore = defineStore('auth', () => {
     bootstrap,
     requestMagicLink,
     verify,
+    verifyCode,
+    loginStatus,
     acceptInvite,
     setActiveGroup,
     logout,
