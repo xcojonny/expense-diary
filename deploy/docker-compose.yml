@@ -1,0 +1,87 @@
+# Production app stack: db + redis + migrate (one-shot) + backend + worker + frontend.
+# Configuration comes entirely from .env (template: .env.example). Put a reverse
+# proxy (Traefik/Caddy/nginx) in front to terminate TLS and route:
+#   /api, /media  -> backend:8000
+#   everything else -> frontend:8080
+
+name: expense-diary
+
+x-backend-image: &backend-image
+  image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/expense-diary-backend:${IMAGE_TAG:-latest}
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-expense}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-expense}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-expense}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # One-shot: apply migrations and seed master data, then exit.
+  migrate:
+    <<: *backend-image
+    command: sh -c "alembic upgrade head && python -m app.seed"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    <<: *backend-image
+    env_file: .env
+    volumes:
+      - media:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  # ARQ worker for the async receipt-extraction pipeline (wired up in step 2).
+  worker:
+    <<: *backend-image
+    command: arq app.workers.settings.WorkerSettings
+    env_file: .env
+    volumes:
+      - media:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/expense-diary-frontend:${IMAGE_TAG:-latest}
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  media:

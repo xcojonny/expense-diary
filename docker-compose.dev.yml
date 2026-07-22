@@ -1,0 +1,32 @@
+# Local development: infrastructure only (Postgres + Redis). Backend, worker
+# and frontend run on the host with hot-reload:
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   cd backend  && uv run alembic upgrade head && uv run python -m app.seed
+#               && uv run uvicorn app.main:app --reload
+#   cd backend  && uv run arq app.workers.settings.WorkerSettings --watch app   # (from step 2)
+#   cd frontend && pnpm dev
+#
+# Or just: make dev-up  (see Makefile). If a host port is already taken
+# (native Postgres/Redis), override it and adjust backend/.env accordingly:
+#   make dev-up DEV_REDIS_PORT=6380
+
+name: expense-dev
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: expense
+      POSTGRES_PASSWORD: expense
+      POSTGRES_DB: expense
+    ports: ["${DEV_DB_PORT:-5432}:5432"]
+    volumes:
+      - dev-db:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports: ["${DEV_REDIS_PORT:-6379}:6379"]
+
+volumes:
+  dev-db:
