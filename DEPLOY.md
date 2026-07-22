@@ -13,6 +13,11 @@ Services: `db`, `redis`, one-shot `migrate`, `backend`, `worker`, `frontend`,
 webhook flips it to `sha-<commit>`. (`docker-compose.dev.yml` is separate, for
 local dev infra only.)
 
+**Try it locally first:** `make prod-up` runs this same stack on your machine
+with images built from source and ports published on `:8000` / `:8080` (no GHCR,
+no Traefik, webhook off) — via the `docker-compose.local.yml` override.
+`make build` just builds the images; `make prod-down` stops it.
+
 ## Ingress (Traefik)
 
 Built-in Traefik labels; joins the homelab's external `proxy` network — no host

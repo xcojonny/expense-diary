@@ -94,9 +94,38 @@ test: ## pytest (needs Postgres) + vitest
 .PHONY: check
 check: lint typecheck test ## Everything CI runs
 
-# -- Build ---------------------------------------------------------------------
+# -- Build & local production run ----------------------------------------------
+# Runs the real production compose locally: images built from source (no GHCR
+# pull) + published host ports (no Traefik). Only the app services start — the
+# deploy webhook / socket proxy stay off.
+
+# docker-compose.local.yml overrides docker-compose.yml (build: + ports:).
+PROD        := -f docker-compose.yml -f docker-compose.local.yml
+PROD_SVCS   := db redis migrate backend worker frontend
+LOCAL_API_PORT  ?= 8000
+LOCAL_WEB_PORT  ?= 8080
+export LOCAL_API_PORT LOCAL_WEB_PORT
+
+.PHONY: _prod-env
+_prod-env:
+	@[ -f .env ] || (cp .env.example .env && \
+		echo "→ .env created from .env.example (local placeholders; edit before real use)")
 
 .PHONY: build
-build: ## Build both Docker images locally
-	docker build -t expense-diary-backend ./backend
-	docker build -t expense-diary-frontend ./frontend
+build: _prod-env ## Build the backend + frontend Docker images locally
+	docker compose $(PROD) build backend frontend
+
+.PHONY: prod-up
+prod-up: _prod-env ## Build + run the production stack locally (API :8000, web :8080)
+	-docker network create proxy >/dev/null 2>&1 || true
+	docker compose $(PROD) up -d --build $(PROD_SVCS)
+	@echo "→ API  http://localhost:$(LOCAL_API_PORT)/api/v1/healthz"
+	@echo "→ Web  http://localhost:$(LOCAL_WEB_PORT)"
+
+.PHONY: prod-logs
+prod-logs: ## Tail logs of the local production stack
+	docker compose $(PROD) logs -f backend worker frontend
+
+.PHONY: prod-down
+prod-down: ## Stop the local production stack (add v=1 to also drop volumes)
+	docker compose $(PROD) down $(if $(v),--volumes,)

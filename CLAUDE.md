@@ -46,8 +46,8 @@ update `docs/architecture.md` in the same change. Scope changes go in
 ```bash
 make install      # uv sync + pnpm install; creates backend/.env
 make dev-up       # Postgres + Redis via docker-compose.dev.yml (+ expense_test DB)
-make dev-backend  # migrate + seed, then uvicorn --reload on :8000
-make dev-frontend # Nuxt dev server on :3000 (proxies /api, /media → backend)
+make dev-backend  # migrate + seed, then uvicorn --reload on :8010 (non-standard dev port)
+make dev-frontend # Nuxt dev server on :3010 (proxies /api, /media → backend)
 make dev-down     # stop the dev infra
 
 make migrate                    # alembic upgrade head
@@ -56,7 +56,10 @@ make seed                       # idempotent master data (categories)
 
 make lint · make typecheck · make test
 make check   # lint + typecheck + test — exactly what CI runs
-make build   # build both Docker images
+
+make build     # build the backend + frontend Docker images locally
+make prod-up   # run the production stack locally (built images, :8000/:8080)
+make prod-down # stop it  ·  make prod-logs # tail logs
 ```
 
 Backend tooling runs through `uv` (from `backend/`); frontend through `pnpm`
