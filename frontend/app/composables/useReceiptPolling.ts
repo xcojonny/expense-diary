@@ -1,14 +1,12 @@
 import { ref } from 'vue'
-import type { Receipt, ReceiptStatus } from '~/types/models'
-
-const TERMINAL: ReceiptStatus[] = ['done', 'needs_review', 'failed']
+import { TERMINAL_STATUSES, type ReceiptDetail } from '~/types/models'
 
 // Live-polling (no WebSocket, by design — the backend is stateless): after an
 // upload the extraction runs async, so poll the receipt every `intervalMs`
-// until it reaches a terminal status. Wired up to the real endpoints in step 3.
+// until it reaches a terminal status (done | needs_review | failed).
 export function useReceiptPolling(intervalMs = 2000) {
   const { api } = useApi()
-  const receipt = ref<Receipt | null>(null)
+  const receipt = ref<ReceiptDetail | null>(null)
   const polling = ref(false)
   let timer: ReturnType<typeof setInterval> | null = null
 
@@ -21,9 +19,9 @@ export function useReceiptPolling(intervalMs = 2000) {
   }
 
   async function tick(id: string) {
-    const data = await api<Receipt>(`/receipts/${id}`)
+    const data = await api<ReceiptDetail>(`/receipts/${id}`)
     receipt.value = data
-    if (TERMINAL.includes(data.status)) stop()
+    if (TERMINAL_STATUSES.includes(data.status)) stop()
   }
 
   function start(id: string) {

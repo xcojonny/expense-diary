@@ -29,16 +29,27 @@ UUID-v7-Primärschlüssel (zeitlich sortiert), `created_at`/`updated_at` per
 Mixin. Geldbeträge als `Numeric` (keine Floats). Enums als Text-Spalte mit
 `CHECK`-Constraint. Produktnamen für den Abgleich als `CITEXT`.
 
+`Receipt` und `Item` gehören einer `GROUP` (Haushalt) — die Tenancy-Grenze
+(siehe §6). `Category` ist geteilte Stammdaten (global). `LineItem` erbt die
+Gruppe über sein `Receipt`.
+
 ```mermaid
 erDiagram
+    GROUP   ||--o{ RECEIPT : owns
+    GROUP   ||--o{ ITEM : owns
     RECEIPT ||--o{ LINE_ITEM : has
     ITEM    ||--o{ LINE_ITEM : "aggregates (via normalized_name)"
     CATEGORY ||--o{ LINE_ITEM : categorizes
     CATEGORY ||--o{ ITEM : categorizes
     CATEGORY ||--o{ CATEGORY : "parent/child"
 
+    GROUP {
+        uuid id PK
+        text name
+    }
     RECEIPT {
         uuid id PK
+        uuid group_id FK
         text store_name
         timestamptz purchased_at
         numeric total
@@ -65,7 +76,8 @@ erDiagram
     }
     ITEM {
         uuid id PK
-        citext normalized_name UK
+        uuid group_id FK
+        citext normalized_name "UK per group"
         text display_name
         uuid category_id FK
     }
@@ -102,17 +114,34 @@ dieselbe Funktion; darüber mappen Positionen auf das `Item`-Stammdatum für
 Trends. Bewusst einfach — ein klügerer Matcher kann später aufsetzen, ohne den
 Vertrag zu ändern.
 
-## 3. Extraktions-Pipeline (Phase 2)
+## 3. Extraktions-Pipeline (Phase 2, implementiert)
 
-1. Upload speichert Datei (SSRF-/Typ-gehärtet, server-generierter Dateiname) und
-   legt `Receipt` mit `status=uploaded` an.
-2. Ein ARQ-Job schickt das Bild an das Vision-LLM mit dem Prompt aus
-   `prompts/receipt_extraction.de.txt` (striktes JSON-Schema).
-3. Ergebnis → `Receipt` + `LineItem`s, Positionen bekommen `normalized_name` und
-   werden auf `Item` gemappt; `status=done`. Bei Parsing-/Summenproblemen
-   `needs_review`, bei Fehlern `failed`.
-4. Jeder LLM-Pfad degradiert sauber auf den Regel-/No-op-Fallback
-   (`LLM_PROVIDER=none`).
+1. `POST /api/v1/receipts` validiert Größe (`UPLOAD_MAX_BYTES`) und Typ per
+   **Magic-Bytes** (`domain/upload.detect_media_type`, nicht dem
+   Client-Content-Type vertrauend), speichert die Datei unter einem
+   server-generierten Namen (`integrations/storage/local`) und legt `Receipt`
+   mit `status=uploaded` an.
+2. Die Extraktion wird eingeplant: bevorzugt als **ARQ-Job**
+   (`workers/tasks.extract_receipt_task`); ist kein Redis/Worker verfügbar,
+   fällt der Endpoint auf **FastAPI BackgroundTasks** zurück (beides laut Brief
+   erlaubt). Der Job setzt `status=processing`.
+3. `services/extraction_service` liest die Datei (PDF → erstes eingebettetes
+   Bild via `integrations/storage/pdf`), schickt sie über den Vision-Adapter
+   (`integrations/llm`) mit dem Prompt aus `prompts/receipt_extraction.de.txt`
+   und übergibt die rohe Antwort dem **reinen** Parser
+   (`domain/extraction.parse_receipt_json`).
+4. Ergebnis → `Receipt` + `LineItem`s; Produkt-Positionen bekommen
+   `normalized_name` und werden pro Gruppe auf `Item` gemappt (Trend-Anker),
+   Deposit/Discount bleiben receipt-lokal. `domain/extraction.reconcile_confidence`
+   vergleicht die Positionssumme mit `total`: passt sie → `status=done`, sonst
+   (oder bei `confidence=low` / keinen Positionen) → `needs_review`.
+5. Jeder Fehler wird als `status=failed` mit `error` festgehalten (ein defekter
+   Bon legt den Worker nicht lahm). `LLM_PROVIDER=none` (kein Modell) →
+   `raw=None` → `needs_review` (manuelle Erfassung). Jeder LLM-Pfad degradiert
+   sauber auf den No-op-Fallback.
+
+Das Frontend (`pages/upload.vue` + `composables/useReceiptPolling`) pollt nach
+dem Upload `GET /api/v1/receipts/{id}` (~2 s), bis ein Endzustand erreicht ist.
 
 ## 4. Analyse-Ebene (Phase 4, das Herzstück)
 
@@ -123,8 +152,29 @@ Aggregationslogik lebt in `domain/` und ist der Testschwerpunkt.
 
 ## 5. Offene Entscheidungen
 
-- Auth: für Phase 1 bewusst weggelassen (privates Homelab). Magic-Link-Login
-  (an cooking-jonelli orientiert) ist als späterer, optionaler Baustein
-  vorgesehen.
+- Auth: noch nicht implementiert (privates Homelab). Magic-Link-Login (an
+  cooking-jonelli orientiert) ist als späterer Baustein vorgesehen und greift
+  in denselben Tenancy-Seam wie unten.
 - Kategorie-Hierarchie: aktuell zweistufig geseedet (Top-Level = die vom Prompt
   vergebenen Kategorien, plus einige Unterkategorien). Tiefe bleibt offen.
+
+## 6. Tenancy / Gruppen
+
+Wie cooking-jonelli ist die **Gruppe (Haushalt)** die Besitz- und
+Mandantengrenze. Damit die spätere Einführung echter Mehr-Gruppen-Unterstützung
+**keine Schema-Migration + Daten-Backfill** wird, ist die Tenancy schon jetzt
+eingebaut:
+
+- `groups`-Tabelle (vorerst minimal: `id`, `name`).
+- `receipts.group_id` und `items.group_id` (NOT NULL, `ON DELETE CASCADE`);
+  `items` sind **pro Gruppe** eindeutig (`unique(group_id, normalized_name)`) —
+  jeder Haushalt hat seinen eigenen Produktkatalog / Preisverlauf.
+- Beim Start wird eine **Default-Gruppe** gebootstrappt
+  (`DEFAULT_GROUP_NAME`, `services/group_service.ensure_default_group`).
+- Der einzige Tenancy-Seam ist `api/deps.get_current_group_id`: heute liefert er
+  die Default-Gruppe, mit Auth später die aktive Mitgliedschaft des Users — die
+  Endpoints hängen unverändert daran.
+
+Was später dazukommt: Auth + `users` + Mitgliedschaftstabelle (Rollen),
+Ableitung der Gruppe aus dem Login. `Category` bleibt geteilte Stammdaten;
+gruppen­spezifische Kategorien könnten optional über ein Override ergänzt werden.

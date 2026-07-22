@@ -26,6 +26,12 @@ class Settings(BaseSettings):
 
     default_locale: str = "de"
 
+    # Tenancy. Real multi-group support (auth + membership) comes later; until
+    # then every receipt belongs to this bootstrapped default group, so the
+    # group_id columns and the current-group seam already carry it. See
+    # docs/architecture.md §6.
+    default_group_name: str = "Haushalt"
+
     # -- Upload hardening ------------------------------------------------------
     upload_max_bytes: int = 15 * 1024 * 1024  # 15 MiB per receipt file
     upload_allowed_types: tuple[str, ...] = (

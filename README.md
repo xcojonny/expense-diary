@@ -15,8 +15,12 @@ The project is built in phases (see the task brief). This repo currently holds:
 
 - [x] **Phase 1 — Foundation:** data model, migrations, seeds, docker-compose,
       backend skeleton (FastAPI + async SQLAlchemy + Alembic), frontend scaffold
-      (Nuxt 3 SPA + Tailwind + PWA), CI. **← you are here**
-- [ ] Phase 2 — Upload + async extraction pipeline (LLM adapter) + status polling
+      (Nuxt 3 SPA + Tailwind + PWA), CI.
+- [x] **Phase 2 — Upload + async extraction pipeline (LLM adapter) + status
+      polling:** upload endpoint (type/size-hardened), provider-agnostic vision
+      adapter (openai/ollama/null), pure JSON parser + consistency check, ARQ
+      worker (with a BackgroundTasks fallback), receipt/category endpoints, and
+      a functional upload page that polls until extraction finishes. **← you are here**
 - [ ] Phase 3 — Dashboard (receipt list, detail view with editable line items)
 - [ ] Phase 4 — Analysis endpoints + report view with charts *(the heart)*
 - [ ] Phase 5 — Category management + manual correction

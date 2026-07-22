@@ -69,16 +69,16 @@ backend/app/
 ├── main.py         # app factory, lifespan, router mount, /media, health
 ├── core/           # config (all ENV), logging
 ├── db/             # engine, sessionmaker, Base + naming conventions
-├── models/         # receipt, line_item, category, item
-├── schemas/        # Pydantic v2 DTOs (phase 2+)
-├── domain/         # ★ PURE, I/O-free logic — normalize.py (+ aggregation, phase 4)
-├── services/       # use-cases: upload, extraction, analysis (phase 2+)
+├── models/         # group, receipt, line_item, category, item
+├── schemas/        # Pydantic v2 DTOs (receipt, category)
+├── domain/         # ★ PURE, I/O-free logic — normalize, extraction, upload (+ aggregation, phase 4)
+├── services/       # use-cases: upload, extraction, group (analysis in phase 4)
 ├── integrations/
-│   ├── llm/        #   vision-LLM adapter: base protocol + openai / ollama / null
-│   └── storage/    #   local media storage
-├── prompts/        # editable extraction prompt(s)
-├── workers/        # ARQ settings + tasks (phase 2)
-└── api/v1/         # health (+ receipts, categories, analytics later)
+│   ├── llm/        #   vision-LLM adapter: base protocol + openai_compatible / null
+│   └── storage/    #   local media storage + pdf first-image
+├── prompts/        # editable extraction prompt(s) + loader
+├── workers/        # ARQ settings + tasks (extract_receipt_task)
+└── api/v1/         # health, receipts, categories (analytics later); deps.py = tenancy seam
 ```
 
 **The one architectural rule that must not be broken:** `domain/` imports
@@ -128,6 +128,15 @@ Frontend types track the backend OpenAPI schema (`pnpm generate:api` →
   no-op and receipts land in `needs_review`; the app runs with no model configured.
 - **Polling, not WebSocket.** Receipt status is polled (~2 s) by design — the
   backend stays stateless. Don't add a WebSocket without revisiting that.
+- **Tenancy via one seam.** `Receipt`/`Item` are group-owned (`group_id`). Real
+  multi-group auth isn't built yet, so a default group is bootstrapped and
+  `api/deps.get_current_group_id` resolves it. Depend on that dependency for the
+  active group in every new endpoint — never hard-code a group — so auth drops
+  in later without touching endpoints. `Item` is unique per `(group_id, normalized_name)`.
+- **Extraction runs off the request path.** Prefer the ARQ worker; the upload
+  endpoint falls back to FastAPI BackgroundTasks when Redis is down. All output
+  interpretation lives in the pure `domain/extraction.py` (parse + consistency),
+  so test it there — not through the service.
 - **`backend/.env.example` targets non-Docker local dev** — `MEDIA_DIR` is
   relative (`./.data/media`); the Docker image uses `/data/media`.
 

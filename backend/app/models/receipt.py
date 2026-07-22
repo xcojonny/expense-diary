@@ -1,4 +1,5 @@
 import enum
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -37,6 +38,9 @@ class Receipt(Base, UUIDPkMixin, TimestampMixin):
         sa.CheckConstraint(f"status IN ({_STATUS_VALUES})", name="status"),
     )
 
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("groups.id", ondelete="CASCADE"), index=True
+    )
     store_name: Mapped[str | None]
     purchased_at: Mapped[datetime | None]
     total: Mapped[Decimal | None] = mapped_column(sa.Numeric(10, 2))

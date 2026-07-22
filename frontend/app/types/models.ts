@@ -1,6 +1,6 @@
-// Frontend-facing types. These track the backend response shapes; once the
-// receipt/analytics endpoints exist (step 2+), regenerate `types/api.d.ts`
-// from the OpenAPI schema (`pnpm generate:api`) and align these with it.
+// Frontend-facing types, aligned with the backend response shapes (snake_case,
+// as FastAPI/Pydantic emit them). Once the OpenAPI schema stabilizes,
+// regenerate `types/api.d.ts` via `pnpm generate:api` and derive from it.
 
 export type ReceiptStatus =
   | 'uploaded'
@@ -14,32 +14,39 @@ export type LineType = 'product' | 'deposit' | 'discount'
 export interface Category {
   id: string
   name: string
-  parentId: string | null
-  sortOrder: number
+  parent_id: string | null
+  sort_order: number
 }
 
 export interface LineItem {
   id: string
-  receiptId: string
-  itemId: string | null
-  categoryId: string | null
   name: string
-  normalizedName: string | null
-  quantity: number | null
+  normalized_name: string | null
+  quantity: string | null
   unit: string | null
-  unitPrice: number | null
-  totalPrice: number
-  vatClass: string | null
-  lineType: LineType
+  unit_price: string | null
+  total_price: string
+  vat_class: string | null
+  line_type: LineType
+  category_id: string | null
+  item_id: string | null
 }
 
 export interface Receipt {
   id: string
-  storeName: string | null
-  purchasedAt: string | null
-  total: number | null
+  store_name: string | null
+  purchased_at: string | null
+  total: string | null
   currency: string
   status: ReceiptStatus
   confidence: string | null
-  lineItems: LineItem[]
+  created_at: string
 }
+
+export interface ReceiptDetail extends Receipt {
+  error: string | null
+  line_items: LineItem[]
+}
+
+// Statuses at which extraction has finished and polling should stop.
+export const TERMINAL_STATUSES: ReceiptStatus[] = ['done', 'needs_review', 'failed']

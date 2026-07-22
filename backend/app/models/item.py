@@ -16,10 +16,18 @@ class Item(Base, UUIDPkMixin, TimestampMixin):
     """
 
     __tablename__ = "items"
+    __table_args__ = (
+        # The trend key is unique per household, not globally: each group keeps
+        # its own product catalog / price history.
+        sa.UniqueConstraint("group_id", "normalized_name", name="group_normalized_name"),
+    )
 
-    # The trend key. CITEXT keeps lookups case-insensitive on top of the
-    # explicit normalization applied before writing.
-    normalized_name: Mapped[str] = mapped_column(CITEXT, unique=True)
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("groups.id", ondelete="CASCADE"), index=True
+    )
+    # CITEXT keeps lookups case-insensitive on top of the explicit
+    # normalization applied before writing.
+    normalized_name: Mapped[str] = mapped_column(CITEXT)
     display_name: Mapped[str | None]  # prettiest name seen on a receipt
     category_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.ForeignKey("categories.id", ondelete="SET NULL")
