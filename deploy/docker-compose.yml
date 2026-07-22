@@ -1,8 +1,11 @@
 # Production app stack: db + redis + migrate (one-shot) + backend + worker + frontend.
-# Configuration comes entirely from .env (template: .env.example). Put a reverse
-# proxy (Traefik/Caddy/nginx) in front to terminate TLS and route:
-#   /api, /media  -> backend:8000
-#   everything else -> frontend:8080
+# Configuration comes entirely from .env (template: .env.example).
+#
+# Ingress is via Traefik (labels below), joining the homelab's existing external
+# `proxy` network. Traefik routes on the public host ${APP_HOST}:
+#   /api/, /media  -> backend:8000   (router expense-api)
+#   everything else -> frontend:8080 (router expense-app)
+# No host ports are published — Traefik reaches the containers over the proxy net.
 
 name: expense-diary
 
@@ -18,8 +21,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-expense}
     volumes:
       - db-data:/var/lib/postgresql/data
+    networks: [internal]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-expense}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-expense} -d ${POSTGRES_DB:-expense}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -27,6 +31,10 @@ services:
 
   redis:
     image: redis:7
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks: [internal]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -42,6 +50,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks: [internal]
     restart: "no"
 
   backend:
@@ -56,11 +65,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
+    networks: [internal, proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.expense-api.rule=Host(`${APP_HOST:?set APP_HOST}`) && (PathPrefix(`/api/`) || PathPrefix(`/media`))
+      - traefik.http.routers.expense-api.entrypoints=websecure
+      - traefik.http.routers.expense-api.tls=true
+      # - traefik.http.routers.expense-api.tls.certresolver=letsencrypt
+      - "traefik.http.routers.expense-api.service=expense-api"
+      - traefik.http.services.expense-api.loadbalancer.server.port=8000
+      - "traefik.http.routers.expense-api.middlewares=default@file"
     restart: unless-stopped
 
-  # ARQ worker for the async receipt-extraction pipeline (wired up in step 2).
+  # ARQ worker for the async receipt-extraction pipeline.
   worker:
     <<: *backend-image
     command: arq app.workers.settings.WorkerSettings
@@ -72,16 +90,32 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    networks: [internal]
     restart: unless-stopped
 
   frontend:
     image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/expense-diary-frontend:${IMAGE_TAG:-latest}
-    ports:
-      - "${FRONTEND_PORT:-8080}:8080"
     depends_on:
       - backend
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.expense-app.rule=Host(`${APP_HOST:?set APP_HOST}`)
+      - traefik.http.routers.expense-app.entrypoints=websecure
+      - traefik.http.routers.expense-app.tls=true
+      # - traefik.http.routers.expense-app.tls.certresolver=letsencrypt
+      - "traefik.http.routers.expense-app.service=expense-app"
+      - traefik.http.services.expense-app.loadbalancer.server.port=8080
+      - "traefik.http.routers.expense-app.middlewares=default@file"
     restart: unless-stopped
+
+networks:
+  internal:
+  proxy:
+    external: true  # the homelab's existing Traefik network
 
 volumes:
   db-data:
+  redis-data:
   media:

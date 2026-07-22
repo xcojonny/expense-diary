@@ -7,8 +7,20 @@ Two compose stacks:
   which GHCR image tag runs — the deploy webhook flips it to `sha-<commit>`.
 - **Infra** (`infra/docker-compose.infra.yml`): the pull-deploy webhook.
 
-Put a reverse proxy (Traefik/Caddy/nginx) in front for TLS and route
-`/api` + `/media` → backend:8000 and everything else → frontend:8080.
+### Ingress (Traefik)
+
+The stack ships **Traefik labels** and joins the homelab's existing external
+`proxy` network — no host ports are published. On the public host `${APP_HOST}`:
+
+- router `expense-api` → `backend:8000` for `PathPrefix(/api/)` and `/media`
+- router `expense-app` → `frontend:8080` for everything else (the SPA)
+
+Both use the `websecure` entrypoint with `tls=true` and the `default@file`
+middleware (your Traefik file-provider security defaults). Uncomment the
+`certresolver=letsencrypt` label (or keep `tls=true` if certs come from
+elsewhere). Requires an external Traefik network named `proxy`:
+`docker network create proxy` (once) if it doesn't exist. Not using Traefik?
+Replace the labels with a `ports:` mapping and your own proxy.
 
 ## Images
 
