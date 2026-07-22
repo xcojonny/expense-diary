@@ -67,18 +67,19 @@ Backend tooling runs through `uv` (from `backend/`); frontend through `pnpm`
 ```
 backend/app/
 ├── main.py         # app factory, lifespan, router mount, /media, health
-├── core/           # config (all ENV), logging
+├── core/           # config (all ENV), logging, security (JWT + token hashing)
 ├── db/             # engine, sessionmaker, Base + naming conventions
-├── models/         # group, receipt, line_item, category, item
-├── schemas/        # Pydantic v2 DTOs (receipt, category)
+├── models/         # user, group(+members/invitations), receipt, line_item, category, item
+├── schemas/        # Pydantic v2 DTOs (auth, user, group, receipt, category, analytics)
 ├── domain/         # ★ PURE, I/O-free logic — normalize, extraction, upload, aggregation
-├── services/       # use-cases: upload, extraction, group, items, receipt_edit, analytics, category
+├── services/       # use-cases: auth, oidc, group, upload, extraction, items, receipt_edit, analytics, category
 ├── integrations/
 │   ├── llm/        #   vision-LLM adapter: base protocol + openai_compatible / null
-│   └── storage/    #   local media storage + pdf first-image
+│   ├── storage/    #   local media storage + pdf first-image
+│   └── mail/       #   SMTP sender + logging fallback (magic-link / invitations)
 ├── prompts/        # editable extraction prompt(s) + loader
 ├── workers/        # ARQ settings + tasks (extract_receipt_task)
-└── api/v1/         # health, receipts, categories, analytics; deps.py = tenancy seam
+└── api/v1/         # health, auth, me, groups, receipts, categories, analytics; deps.py = auth + tenancy seam
 ```
 
 **The one architectural rule that must not be broken:** `domain/` imports
@@ -129,11 +130,20 @@ Frontend types track the backend OpenAPI schema (`pnpm generate:api` →
   no-op and receipts land in `needs_review`; the app runs with no model configured.
 - **Polling, not WebSocket.** Receipt status is polled (~2 s) by design — the
   backend stays stateless. Don't add a WebSocket without revisiting that.
-- **Tenancy via one seam.** `Receipt`/`Item` are group-owned (`group_id`). Real
-  multi-group auth isn't built yet, so a default group is bootstrapped and
-  `api/deps.get_current_group_id` resolves it. Depend on that dependency for the
-  active group in every new endpoint — never hard-code a group — so auth drops
-  in later without touching endpoints. `Item` is unique per `(group_id, normalized_name)`.
+- **Auth + tenancy via one seam.** Everything except `/healthz` and `/auth/*`
+  requires a session. `api/deps.get_current_user` resolves the Bearer JWT;
+  `get_current_group_id` resolves the active household from the `X-Group-Id`
+  header (membership-checked) else the earliest membership. Depend on those in
+  every new endpoint — never hard-code a group. `Item` is unique per
+  `(group_id, normalized_name)`. Governance (invitations) uses `require_group_admin`.
+- **Login = magic link or OIDC (Authelia); no passwords.** Both issue the app's
+  own session: short-lived JWT access token (in memory) + rotating refresh token
+  (httpOnly cookie, hashed, `/auth/refresh` rotates). `COOKIE_SECURE=false` for
+  plain-HTTP dev, else the refresh cookie isn't sent. Simplifications on purpose
+  (homelab): magic links aren't browser-bound; refresh has no reuse-detection.
+- **Mail is optional in dev.** With no `SMTP_HOST` the mailer logs the link
+  (grab it from the backend log). Tests install a capturing mailer via
+  `integrations.mail.sender.set_mailer`.
 - **Extraction runs off the request path.** Prefer the ARQ worker; the upload
   endpoint falls back to FastAPI BackgroundTasks when Redis is down. All output
   interpretation lives in the pure `domain/extraction.py` (parse + consistency),

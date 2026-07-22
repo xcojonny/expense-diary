@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import EmailStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,7 +16,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_env: str = "production"  # production | development | test
-    base_url: str = "http://localhost:3000"  # public URL of the frontend
+    base_url: str = "http://localhost:3000"  # public URL of the frontend (links in mail)
+    api_base_url: str = "http://localhost:8000"  # public URL of the API (OIDC redirect)
+
+    secret_key: str = "change-me"  # JWT signing (set a strong value in prod)
 
     database_url: str = "postgresql+asyncpg://expense:expense@localhost:5432/expense"
     redis_url: str = "redis://localhost:6379/0"
@@ -26,11 +30,37 @@ class Settings(BaseSettings):
 
     default_locale: str = "de"
 
-    # Tenancy. Real multi-group support (auth + membership) comes later; until
-    # then every receipt belongs to this bootstrapped default group, so the
-    # group_id columns and the current-group seam already carry it. See
-    # docs/architecture.md §6.
+    # -- Tenancy & auth --------------------------------------------------------
+    # The initial admin is bootstrapped on startup (active instance admin, owns
+    # a default group). Further users arrive via group invitation or OIDC.
     default_group_name: str = "Haushalt"
+    initial_admin_email: EmailStr | None = None
+
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 30
+    magic_link_ttl_minutes: int = 15
+    invitation_ttl_days: int = 14
+    cookie_secure: bool = True  # set false for plain-HTTP local dev
+
+    # -- SMTP (magic-link / invitation mail) -----------------------------------
+    # With no host configured the mailer logs the link instead of sending — fine
+    # for local dev (grab the link from the backend log).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True
+    mail_from: str = "haushaltsbuch@example.org"
+    mail_from_name: str = "Haushaltsbuch"
+
+    # -- OIDC single sign-on (Authelia or any OIDC provider) -------------------
+    # Empty issuer disables the SSO button. Discovery document is fetched from
+    # {issuer}/.well-known/openid-configuration.
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_provider_name: str = "Authelia"  # login-button label
+    oidc_scopes: str = "openid email profile"
 
     # -- Upload hardening ------------------------------------------------------
     upload_max_bytes: int = 15 * 1024 * 1024  # 15 MiB per receipt file

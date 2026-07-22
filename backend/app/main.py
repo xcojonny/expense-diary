@@ -4,15 +4,16 @@ from pathlib import Path
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import analytics, categories, health, receipts
+from app.api.deps import get_current_user
+from app.api.v1 import analytics, auth, categories, groups, health, me, receipts
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import get_sessionmaker
-from app.services import group_service
+from app.services import auth_service
 
 log = get_logger(__name__)
 
@@ -24,7 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # media_dir is created synchronously in create_app().
 
     async with get_sessionmaker()() as session:
-        await group_service.ensure_default_group(session)
+        await auth_service.ensure_initial_admin(session)
 
     # ARQ pool for enqueuing extraction jobs. If Redis is unreachable we degrade
     # gracefully: the upload endpoint falls back to FastAPI BackgroundTasks, so
@@ -64,9 +65,16 @@ def create_app() -> FastAPI:
         )
 
     api = "/api/v1"
+    # Public: health + auth (login/refresh/OIDC).
     app.include_router(health.router, prefix=api)
+    app.include_router(auth.router, prefix=api)
+    # Authenticated. Group-owned routers enforce auth via get_current_group_id;
+    # the rest carry an explicit get_current_user dependency.
+    protected = [Depends(get_current_user)]
+    app.include_router(me.router, prefix=api)
+    app.include_router(groups.router, prefix=api)
     app.include_router(receipts.router, prefix=api)
-    app.include_router(categories.router, prefix=api)
+    app.include_router(categories.router, prefix=api, dependencies=protected)
     app.include_router(analytics.router, prefix=api)
 
     media_dir = Path(settings.media_dir)

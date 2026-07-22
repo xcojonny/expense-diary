@@ -51,6 +51,33 @@ export interface ReceiptDetail extends Receipt {
 // Statuses at which extraction has finished and polling should stop.
 export const TERMINAL_STATUSES: ReceiptStatus[] = ['done', 'needs_review', 'failed']
 
+// --- Auth & tenancy ----------------------------------------------------------
+
+export interface Membership {
+  group_id: string
+  group_name: string
+  role: string
+}
+
+export interface Me {
+  id: string
+  email: string
+  display_name: string
+  is_instance_admin: boolean
+  memberships: Membership[]
+}
+
+export interface GroupSummary {
+  id: string
+  name: string
+  role: string
+}
+
+export interface AuthConfig {
+  oidc_enabled: boolean
+  oidc_provider_name: string
+}
+
 // --- Analysis layer (decimals arrive as strings) -----------------------------
 
 export interface CategorySpend {

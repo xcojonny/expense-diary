@@ -180,12 +180,12 @@ Frontend formatiert (kein Float-Rundungsfehler).
 
 ## 5. Offene Entscheidungen
 
-- Auth: noch nicht implementiert (privates Homelab). Magic-Link-Login (an
-  cooking-jonelli orientiert) ist als späterer Baustein vorgesehen und greift
-  in denselben Tenancy-Seam wie unten.
 - Kategorie-Hierarchie: geseedet (Top-Level = die vom Prompt vergebenen
   Kategorien, plus einige Unterkategorien) und via CRUD verwaltbar (Phase 5,
   siehe §7). Tiefe ist nicht begrenzt.
+- Session-Härtung: Refresh-Rotation ist da, aber ohne Family-Reuse-Detection;
+  Magic-Links sind Single-Use + kurzlebig, aber nicht browser-gebunden. Für ein
+  privates Homelab bewusst proportioniert (siehe §8).
 
 ## 7. Kategorien-Verwaltung (Phase 5)
 
@@ -203,23 +203,66 @@ Frontend: `pages/kategorien.vue` (anlegen, umbenennen, umhängen, löschen). Die
 manuelle Positions-Korrektur (Phase 3) nutzt dieselbe Kategorienliste im
 Bon-Detail-Dropdown.
 
-## 6. Tenancy / Gruppen
+## 6. Multi-Tenancy & Auth (implementiert)
 
-Wie cooking-jonelli ist die **Gruppe (Haushalt)** die Besitz- und
-Mandantengrenze. Damit die spätere Einführung echter Mehr-Gruppen-Unterstützung
-**keine Schema-Migration + Daten-Backfill** wird, ist die Tenancy schon jetzt
-eingebaut:
+Die **Gruppe (Haushalt)** ist die Mandantengrenze. Nutzer gehören über
+`group_members` (Rolle `admin`/`member`) einem oder mehreren Haushalten an.
 
-- `groups`-Tabelle (vorerst minimal: `id`, `name`).
 - `receipts.group_id` und `items.group_id` (NOT NULL, `ON DELETE CASCADE`);
   `items` sind **pro Gruppe** eindeutig (`unique(group_id, normalized_name)`) —
   jeder Haushalt hat seinen eigenen Produktkatalog / Preisverlauf.
-- Beim Start wird eine **Default-Gruppe** gebootstrappt
-  (`DEFAULT_GROUP_NAME`, `services/group_service.ensure_default_group`).
-- Der einzige Tenancy-Seam ist `api/deps.get_current_group_id`: heute liefert er
-  die Default-Gruppe, mit Auth später die aktive Mitgliedschaft des Users — die
-  Endpoints hängen unverändert daran.
+- **Tenancy-Seam** `api/deps.get_current_group_id`: leitet die aktive Gruppe aus
+  dem `X-Group-Id`-Header ab (Mitgliedschaft vorausgesetzt), sonst die früheste
+  Mitgliedschaft. Jeder gruppen-behaftete Endpoint hängt daran — Gruppenwechsel
+  ist ein Header, Auth bleibt an einer Stelle.
+- Governance (`require_group_admin`): Einladungen erfordern Admin der aktiven Gruppe.
+- Bootstrap: `INITIAL_ADMIN_EMAIL` wird beim Start als aktiver Instanz-Admin +
+  Besitzer der Default-Gruppe angelegt (`auth_service.ensure_initial_admin`).
+  Neue Nutzer ohne Einladung erhalten einen eigenen Haushalt (`ensure_personal_group`).
 
-Was später dazukommt: Auth + `users` + Mitgliedschaftstabelle (Rollen),
-Ableitung der Gruppe aus dem Login. `Category` bleibt geteilte Stammdaten;
-gruppen­spezifische Kategorien könnten optional über ein Override ergänzt werden.
+### 6.1 Login-Flüsse
+
+Kein Passwort. Zwei Wege, beide stellen die **App-eigene** Session aus
+(kurzlebiges JWT-Access-Token im Speicher + rotierendes Refresh-Token als
+httpOnly-Cookie, hash-gespeichert, `/auth/refresh` rotiert, `/auth/logout` widerruft):
+
+- **Magic-Link** (`/auth/magic-link` → Mail → `/auth/verify`): Single-Use,
+  kurzlebig. Kein User-Enumeration (immer 202). Mail via SMTP; ohne
+  `SMTP_HOST` loggt der Mailer den Link (Dev).
+- **OIDC / Authelia** (`/auth/oidc/login` → Authelia → `/auth/oidc/callback`):
+  Authorization-Code-Flow mit vertraulichem Client (`services/oidc_service`),
+  State-Cookie gegen CSRF, Userinfo über TLS. `upsert_oidc_user` verknüpft
+  `(issuer, subject)` → lokaler User (Anlage bei Erstlogin).
+- **Einladungen** (`/groups/invitations` → Mail → `/auth/invitations/accept`):
+  legt/aktiviert den User und die Mitgliedschaft an.
+
+Frontend: `stores/auth` (Bootstrap via `/auth/refresh`), globaler Route-Guard,
+`pages/login.vue` (Magic-Link + SSO-Button + Token/Invite/SSO-Callback),
+`GroupSwitcher` (Header) und `pages/gruppe.vue` (Haushalte, anlegen, einladen).
+
+### 6.2 Authelia als OIDC-Client
+
+In Authelias `identity_providers.oidc.clients` einen vertraulichen Client anlegen:
+
+```yaml
+- client_id: expense-diary
+  client_secret: '<hash oder plaintext gemäß Authelia-Version>'
+  redirect_uris:
+    - https://haushaltsbuch.example.org/api/v1/auth/oidc/callback
+  scopes: [openid, email, profile]
+  grant_types: [authorization_code]
+  response_types: [code]
+```
+
+Backend-ENV: `OIDC_ISSUER=https://auth.example.org`, `OIDC_CLIENT_ID`,
+`OIDC_CLIENT_SECRET` (siehe `deploy/.env.example`).
+
+## 8. Release & Deployment
+
+`.github/workflows/release.yml` baut nach grüner CI auf `main` (sowie auf
+`v*`-Tags / manuell) die Images `ghcr.io/<owner>/expense-diary-{backend,frontend}`
+(Tags `latest`, `sha-<sha>`, bei Tags `semver`) und schiebt sie nach GHCR; das
+Git-SHA wird als `GIT_SHA` eingebacken (`/api/v1/version`). Deployment zieht diese
+Images über `deploy/docker-compose.yml` (Reverse-Proxy davor für TLS + Routing
+`/api`,`/media` → Backend, Rest → Frontend). Das konkrete Deploy-Verfahren
+(z. B. Webhook/`docker compose pull`) bleibt der Homelab-Umgebung überlassen.

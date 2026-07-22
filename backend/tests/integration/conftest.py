@@ -1,4 +1,5 @@
-"""Integration-test fixtures: real Postgres, app over an in-memory ASGI transport."""
+"""Integration-test fixtures: real Postgres, app over an in-memory ASGI
+transport, a captured mailer, and a pre-authenticated client."""
 
 import os
 import subprocess
@@ -8,7 +9,26 @@ import httpx
 import pytest
 import sqlalchemy as sa
 
+from app.integrations.mail.sender import Email
 from tests.conftest import BACKEND_DIR
+
+
+class CapturingMailer:
+    """Test mailer: keeps sent mail in memory so tests can read the login /
+    invitation link (and its token)."""
+
+    def __init__(self) -> None:
+        self.sent: list[Email] = []
+
+    async def send(self, email: Email) -> None:
+        self.sent.append(email)
+
+    def last_token(self, param: str = "token") -> str:
+        assert self.sent, "no mail captured"
+        for word in self.sent[-1].text.split():
+            if word.startswith("http") and f"{param}=" in word:
+                return word.split(f"{param}=", 1)[1]
+        raise AssertionError(f"no {param}= link in mail: {self.sent[-1].text!r}")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -23,32 +43,69 @@ def _database() -> None:
     )
 
 
-@pytest.fixture
-async def app_client() -> AsyncIterator[httpx.AsyncClient]:
-    from app.main import create_app
-
-    app = create_app()
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            yield client
-
-
 @pytest.fixture(autouse=True)
 async def _clean_state() -> AsyncIterator[None]:
-    """Reset to a pristine state *before* each test: no receipts/items and the
-    seeded category tree only. Categories are reset too (not just left alone)
-    because phase-5 tests mutate that master data — otherwise created/renamed
-    categories would leak across tests and re-runs."""
+    """Pristine state before each test: no users/groups/receipts and the seeded
+    category tree only. Deleting groups/users cascades all owned rows."""
     from app.db.session import get_sessionmaker
     from app.seed import seed_categories
 
     async with get_sessionmaker()() as session:
-        # line_items cascade from receipts (FK ON DELETE CASCADE); items and
-        # categories aren't reachable by that cascade, so clear them explicitly.
-        await session.execute(sa.text("DELETE FROM receipts"))
-        await session.execute(sa.text("DELETE FROM items"))
+        # groups cascade → members, invitations, receipts→line_items, items;
+        # users cascade → refresh/magic tokens, oidc identities, memberships.
+        await session.execute(sa.text("DELETE FROM groups"))
+        await session.execute(sa.text("DELETE FROM users"))
         await session.execute(sa.text("DELETE FROM categories"))
         await session.commit()
-        await seed_categories(session)  # restore the pristine seed tree
+        await seed_categories(session)
     yield
+
+
+@pytest.fixture
+async def mailer() -> AsyncIterator[CapturingMailer]:
+    from app.integrations.mail import sender
+
+    capturing = CapturingMailer()
+    sender.set_mailer(capturing)
+    yield capturing
+    sender.set_mailer(None)
+
+
+def _make_client(app: object) -> httpx.AsyncClient:
+    transport = httpx.ASGITransport(app=app)  # type: ignore[arg-type]
+    return httpx.AsyncClient(transport=transport, base_url="http://testserver")
+
+
+@pytest.fixture
+async def anon_client(_clean_state: None) -> AsyncIterator[httpx.AsyncClient]:
+    """Unauthenticated client (for the auth flows themselves)."""
+    from app.main import create_app
+
+    app = create_app()
+    async with app.router.lifespan_context(app), _make_client(app) as client:
+        yield client
+
+
+@pytest.fixture
+async def app_client(_clean_state: None) -> AsyncIterator[httpx.AsyncClient]:
+    """Client pre-authenticated as an active admin of a fresh test group — the
+    Authorization + X-Group-Id headers are set so existing endpoint tests just
+    work."""
+    from app.core.security import create_access_token
+    from app.db.session import get_sessionmaker
+    from app.main import create_app
+    from app.services import auth_service, group_service
+
+    async with get_sessionmaker()() as session:
+        user = await auth_service.create_user(
+            session, email="test@example.org", display_name="Test", is_instance_admin=True
+        )
+        await session.flush()
+        group = await group_service.create_group(session, user=user, name="Testhaushalt")
+        access = create_access_token(user.id, is_instance_admin=True)
+
+    app = create_app()
+    async with app.router.lifespan_context(app), _make_client(app) as client:
+        client.headers["Authorization"] = f"Bearer {access}"
+        client.headers["X-Group-Id"] = str(group.id)
+        yield client

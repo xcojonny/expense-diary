@@ -35,14 +35,24 @@ The project is built in phases (see the task brief). This repo currently holds:
 
 All five build phases are implemented.
 
+Beyond the brief:
+
+- [x] **Multi-tenancy + auth:** users, households with roles (admin/member) and
+      email invitations, a per-request active-group seam. Login via **magic link**
+      or **OIDC SSO (Authelia)** — no passwords; the app issues its own JWT access +
+      rotating refresh session. See `docs/architecture.md` §6.
+- [x] **Release workflow:** `.github/workflows/release.yml` builds & pushes the
+      backend/frontend images to GHCR on green CI / version tags.
+
 ## Stack
 
 - **Backend:** FastAPI, SQLAlchemy 2 (async), PostgreSQL 16, Alembic, ARQ + Redis
   worker (async extraction), `uv`-managed.
 - **Frontend:** Nuxt 3 SPA (`ssr: false`), TypeScript strict, Pinia, Tailwind, PWA.
+- **Auth:** magic-link + OIDC (Authelia); JWT access + httpOnly rotating refresh.
 - **LLM:** provider-agnostic adapter (`backend/app/integrations/llm/`). Default is
   an OpenAI-Vision-compatible endpoint; swap to local Ollama by changing ENV only.
-- **Deployment:** docker-compose (db, redis, backend, worker, frontend).
+- **Deployment:** docker-compose (db, redis, backend, worker, frontend); images on GHCR.
 
 ## Architecture at a glance
 
@@ -103,10 +113,30 @@ Backend settings live in `backend/app/core/config.py`; template:
 | `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible or Ollama endpoint |
 | `LLM_MODEL` | `gpt-4o-mini` | Vision model name |
 | `LLM_TIMEOUT_SECONDS` | `90` | Per-request LLM timeout |
+| `SECRET_KEY` | `change-me` | JWT signing — set a strong value in prod |
+| `INITIAL_ADMIN_EMAIL` | – | Bootstrapped active admin + default-group owner |
+| `COOKIE_SECURE` | `true` | `false` for plain-HTTP local dev (else no refresh cookie) |
+| `SMTP_HOST` | – | Empty ⇒ magic-link/invite links are logged, not sent |
+| `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_STARTTLS` | – | SMTP delivery |
+| `MAIL_FROM` / `MAIL_FROM_NAME` | `haushaltsbuch@example.org` / `Haushaltsbuch` | Sender |
+| `OIDC_ISSUER` | – | Empty ⇒ SSO disabled; else the OIDC provider (Authelia) |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | – | Confidential OIDC client credentials |
+| `OIDC_PROVIDER_NAME` | `Authelia` | Login-button label |
 
 `LLM_PROVIDER=none` keeps the app fully runnable without any LLM configured:
 extraction falls back to a no-op and receipts land in `needs_review` for manual
 entry, so nothing hard-depends on an external model.
+
+## Auth & SSO
+
+No passwords — log in via a **magic link** (emailed; with no `SMTP_HOST` the link
+is written to the backend log for local dev) or **OIDC SSO** against Authelia (or
+any OIDC provider). The app issues its own session (short-lived JWT access token +
+rotating httpOnly refresh cookie). The first login uses `INITIAL_ADMIN_EMAIL`
+(request a magic link for it). Register the OIDC client in Authelia with redirect
+URI `{API_BASE_URL}/api/v1/auth/oidc/callback` — see `docs/architecture.md` §6.2.
+Households are multi-tenant: users can belong to several, switch the active one in
+the header, and admins invite members by email.
 
 ## Deployment
 

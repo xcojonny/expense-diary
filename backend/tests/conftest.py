@@ -9,5 +9,7 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/1")
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("BASE_URL", "http://testserver")
 os.environ.setdefault("MEDIA_DIR", "/tmp/expense-test-media")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-bytes-long-0123456789")
+os.environ.setdefault("COOKIE_SECURE", "false")  # tests run over plain HTTP
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
