@@ -1,19 +1,29 @@
-# Production app stack: db + redis + migrate (one-shot) + backend + worker + frontend.
-# Configuration comes entirely from .env (template: .env.example).
+# Single production stack: db + redis + migrate + backend + worker + frontend,
+# plus the pull-deploy webhook (via a hardened docker-socket-proxy). One file,
+# one `.env` — on the server: `git pull && docker compose pull && docker compose up -d`.
 #
-# Ingress is via Traefik (labels below), joining the homelab's existing external
-# `proxy` network. Traefik routes on the public host ${APP_HOST}:
-#   /api/, /media  -> backend:8000   (router expense-api)
-#   everything else -> frontend:8080 (router expense-app)
-# No host ports are published — Traefik reaches the containers over the proxy net.
+# Ingress is Traefik (labels below), joining the homelab's external `proxy` net.
+# On ${APP_HOST}:  /api/,/media → backend:8000 · /hooks → webhook:9000 · rest → frontend:8080
 
 name: expense-diary
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# no-new-privileges on every service; merged in via `<<: *hardened`.
+x-hardened: &hardened
+  security_opt:
+    - "no-new-privileges:true"
 
 x-backend-image: &backend-image
   image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/expense-diary-backend:${IMAGE_TAG:-latest}
 
 services:
   db:
+    <<: *hardened
     image: postgres:16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-expense}
@@ -27,9 +37,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
 
   redis:
+    <<: *hardened
     image: redis:7
     command: redis-server --appendonly yes
     volumes:
@@ -40,21 +52,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
 
   # One-shot: apply migrations and seed master data, then exit.
   migrate:
-    <<: *backend-image
+    <<: [*backend-image, *hardened]
     command: sh -c "alembic upgrade head && python -m app.seed"
     env_file: .env
     depends_on:
       db:
         condition: service_healthy
     networks: [internal]
+    logging: *default-logging
     restart: "no"
 
   backend:
-    <<: *backend-image
+    <<: [*backend-image, *hardened]
     env_file: .env
     volumes:
       - media:/data/media
@@ -67,20 +81,21 @@ services:
         condition: service_healthy
     networks: [internal, proxy]
     labels:
-      - traefik.enable=true
-      - traefik.docker.network=proxy
-      - traefik.http.routers.expense-api.rule=Host(`${APP_HOST:?set APP_HOST}`) && (PathPrefix(`/api/`) || PathPrefix(`/media`))
-      - traefik.http.routers.expense-api.entrypoints=websecure
-      - traefik.http.routers.expense-api.tls=true
-      # - traefik.http.routers.expense-api.tls.certresolver=letsencrypt
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.expense-api.rule=Host(`${APP_HOST:?set APP_HOST}`) && (PathPrefix(`/api/`) || PathPrefix(`/media`))"
+      - "traefik.http.routers.expense-api.entrypoints=websecure"
+      - "traefik.http.routers.expense-api.tls=true"
+      # - "traefik.http.routers.expense-api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.expense-api.service=expense-api"
-      - traefik.http.services.expense-api.loadbalancer.server.port=8000
+      - "traefik.http.services.expense-api.loadbalancer.server.port=8000"
       - "traefik.http.routers.expense-api.middlewares=default@file"
+    logging: *default-logging
     restart: unless-stopped
 
   # ARQ worker for the async receipt-extraction pipeline.
   worker:
-    <<: *backend-image
+    <<: [*backend-image, *hardened]
     command: arq app.workers.settings.WorkerSettings
     env_file: .env
     volumes:
@@ -91,23 +106,83 @@ services:
       redis:
         condition: service_healthy
     networks: [internal]
+    logging: *default-logging
     restart: unless-stopped
 
   frontend:
+    <<: *hardened
     image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/expense-diary-frontend:${IMAGE_TAG:-latest}
     depends_on:
       - backend
     networks: [proxy]
     labels:
-      - traefik.enable=true
-      - traefik.docker.network=proxy
-      - traefik.http.routers.expense-app.rule=Host(`${APP_HOST:?set APP_HOST}`)
-      - traefik.http.routers.expense-app.entrypoints=websecure
-      - traefik.http.routers.expense-app.tls=true
-      # - traefik.http.routers.expense-app.tls.certresolver=letsencrypt
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.expense-app.rule=Host(`${APP_HOST:?set APP_HOST}`)"
+      - "traefik.http.routers.expense-app.entrypoints=websecure"
+      - "traefik.http.routers.expense-app.tls=true"
+      # - "traefik.http.routers.expense-app.tls.certresolver=letsencrypt"
       - "traefik.http.routers.expense-app.service=expense-app"
-      - traefik.http.services.expense-app.loadbalancer.server.port=8080
+      - "traefik.http.services.expense-app.loadbalancer.server.port=8080"
       - "traefik.http.routers.expense-app.middlewares=default@file"
+    logging: *default-logging
+    restart: unless-stopped
+
+  # Least-privilege Docker API gateway for the deploy webhook (no raw socket in
+  # the webhook container). Read-only socket in; only the endpoints compose needs.
+  docker-socket-proxy:
+    <<: *hardened
+    image: tecnativa/docker-socket-proxy:0.3
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      SERVICES: 1
+      TASKS: 1
+      INFO: 1
+      PING: 1
+      VERSION: 1
+      POST: 1  # required for `compose up`/pull
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [internal]
+    logging: *default-logging
+    restart: unless-stopped
+
+  # Pull-deploy webhook. GitHub Actions POSTs an HMAC-signed {sha,timestamp};
+  # deploy.sh logs in to GHCR and runs `docker compose pull/up` (over the socket
+  # proxy) for the app services only.
+  deploy-webhook:
+    container_name: expense-deploy-webhook
+    <<: *hardened
+    build: ./webhook
+    depends_on:
+      - docker-socket-proxy
+    environment:
+      DEPLOY_WEBHOOK_SECRET: ${DEPLOY_WEBHOOK_SECRET:?set DEPLOY_WEBHOOK_SECRET in .env}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      GHCR_USER: ${GHCR_USER:?set GHCR_USER in .env}
+      GHCR_TOKEN: ${GHCR_TOKEN:?set GHCR_TOKEN in .env}
+      NTFY_URL: ${NTFY_URL:-}
+      # Directory (mounted below) holding THIS compose file + .env; deploy.sh runs
+      # `docker compose` there, targeting only the app's services.
+      COMPOSE_DIR: /srv/expense
+    volumes:
+      - ${APP_DEPLOY_DIR:?set APP_DEPLOY_DIR in .env}:/srv/expense
+    networks: [internal, proxy]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.services.expense-deploy.loadbalancer.server.port=9000"
+      # Public but HMAC-gated. /hooks collides with no frontend or /api route.
+      - "traefik.http.routers.expense-deploy.rule=Host(`${APP_HOST:?set APP_HOST}`) && PathPrefix(`/hooks`)"
+      - "traefik.http.routers.expense-deploy.priority=1500"
+      - "traefik.http.routers.expense-deploy.entrypoints=websecure"
+      - "traefik.http.routers.expense-deploy.service=expense-deploy"
+      - "traefik.http.routers.expense-deploy.tls=true"
+      # - "traefik.http.routers.expense-deploy.tls.certresolver=letsencrypt"
+    logging: *default-logging
     restart: unless-stopped
 
 networks:

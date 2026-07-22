@@ -276,13 +276,18 @@ Backend-ENV: `OIDC_ISSUER=https://auth.example.org`, `OIDC_CLIENT_ID`,
 (Tags `latest`, `sha-<sha>`, bei Tags `semver`) und schiebt sie nach GHCR; das
 Git-SHA wird als `GIT_SHA` eingebacken (`/api/v1/version`).
 
-**Pull-Deploy per Webhook** (wie cooking-jonelli, `webhook/`): der
-`deploy`-Job schickt nach grüner CI einen **HMAC-SHA256-signierten**
-`{sha, timestamp}`-Body an `DEPLOY_WEBHOOK_URL` (`X-Hub-Signature-256`, verifiziert
-gegen `DEPLOY_WEBHOOK_SECRET`). Der [`webhook`](https://github.com/adnanh/webhook)-
-Container ruft `deploy.sh` auf: Replay-Schutz (>5 min verworfen), `flock`,
-`IMAGE_TAG=sha-<commit>` in der App-`.env`, `docker compose pull && up -d --wait`,
-**Auto-Rollback** auf den vorherigen Tag bei nicht-healthy Zustand, optionale
-ntfy-Benachrichtigung. Ohne gesetzte Secrets ist der Deploy-Job ein No-op.
-Reverse-Proxy davor für TLS + Routing `/api`,`/media` → Backend, Rest → Frontend.
-Details: `DEPLOY.md`.
+Alles in **einer** `docker-compose.yml` im Repo-Root (App + Webhook +
+docker-socket-proxy), eine gemeinsame `.env`. Deploy auf dem Server:
+`git pull && docker compose pull && docker compose up -d`. Ingress via Traefik-
+Labels (externes `proxy`-Netz): `/api/`,`/media` → Backend, `/hooks` → Webhook,
+Rest → Frontend; jeder Dienst mit `no-new-privileges` + Log-Rotation (YAML-Anker).
+
+**Pull-Deploy per Webhook** (wie cooking-jonelli, `webhook/`): der `deploy`-Job
+schickt nach grüner CI einen **HMAC-SHA256-signierten** `{sha, timestamp}`-Body an
+`DEPLOY_WEBHOOK_URL` (`…/hooks/deploy`, `X-Hub-Signature-256`, verifiziert gegen
+`DEPLOY_WEBHOOK_SECRET`). `deploy.sh` prüft Replay (>5 min), `flock`, loggt sich
+per `GHCR_USER`/`GHCR_TOKEN` an GHCR ein, setzt `IMAGE_TAG=sha-<commit>` und ruft
+`docker compose pull/up` **nur für die App-Dienste** auf — über den
+**docker-socket-proxy** (keine rohe Socket-im-Webhook), **Auto-Rollback** bei
+nicht-healthy Zustand, optionale ntfy-Benachrichtigung. Ohne gesetzte GitHub-
+Secrets ist der Deploy-Job ein No-op. Details: `DEPLOY.md`.

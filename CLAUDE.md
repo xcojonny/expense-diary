@@ -17,7 +17,7 @@ Monorepo:
 - `backend/` — FastAPI + SQLAlchemy 2 (async) + Alembic, PostgreSQL 16, ARQ + Redis worker.
 - `frontend/` — Nuxt 3 SPA (`ssr: false`), TypeScript strict, Tailwind, PWA, pnpm.
 - `docs/` — source-of-truth docs (read before large changes).
-- root `docker-compose.yml` (+ `.infra.yml`, `webhook/`) — production stack & deploy webhook (see `DEPLOY.md`).
+- root `docker-compose.yml` (+ `webhook/`) — single production stack incl. the deploy webhook (see `DEPLOY.md`).
 
 ## Read these first
 

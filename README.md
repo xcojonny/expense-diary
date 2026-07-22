@@ -144,13 +144,13 @@ the header, and admins invite members by email.
 
 ## Deployment
 
-The deploy files live at the repo root, so updating is `git pull &&
-docker compose pull && docker compose up -d`. `docker-compose.yml` runs the full
-stack (db, redis, one-shot migrate, backend, worker, frontend); configure via
-`.env` (template: `.env.example`). Ingress is via built-in **Traefik labels**
-(`APP_HOST`, external `proxy` network) — `/api/` + `/media` → backend, the rest →
-frontend. `docker-compose.infra.yml` (+ `webhook/`) is the optional pull-deploy
-webhook. Full guide: [`DEPLOY.md`](DEPLOY.md).
+A single root `docker-compose.yml` runs the whole production stack — db, redis,
+one-shot migrate, backend, worker, frontend, **plus** the pull-deploy webhook
+(via a hardened docker-socket-proxy). Updating is `git pull && docker compose
+pull && docker compose up -d`. Configure via `.env` (template: `.env.example`).
+Ingress is built-in **Traefik labels** (`APP_HOST`, external `proxy` network):
+`/api/` + `/media` → backend, `/hooks` → webhook, the rest → frontend. Full
+guide: [`DEPLOY.md`](DEPLOY.md).
 
 ## License
 

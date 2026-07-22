@@ -9,6 +9,9 @@
 #   restored (backend/worker/frontend only — the DB may already be migrated).
 # - --skip-migrate: for manual rollbacks to an older SHA (the old image doesn't
 #   know the newer Alembic revision; migrations are expand-contract).
+#
+# Talks to the Docker daemon through DOCKER_HOST (the socket proxy), and only
+# ever touches the APP services — never the webhook or the socket proxy itself.
 set -euo pipefail
 
 SHA="${1:?usage: deploy.sh <sha> <timestamp> [--skip-migrate]}"
@@ -51,6 +54,12 @@ if [ ! -f docker-compose.yml ] || [ ! -f .env ]; then
   exit 1
 fi
 
+# GHCR login so private image pulls succeed (auth travels to the daemon with
+# the pull request; the socket proxy only needs IMAGES + POST).
+if [ -n "${GHCR_TOKEN:-}" ]; then
+  echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER:-x}" --password-stdin >/dev/null
+fi
+
 PREVIOUS_TAG=$(grep -E '^IMAGE_TAG=' .env | cut -d= -f2 || true)
 NEW_TAG="sha-${SHA}"
 
@@ -62,13 +71,15 @@ set_tag() {
   fi
 }
 
+# Only the app services. `up backend worker frontend` pulls in migrate/db/redis
+# via depends_on (running the one-shot migrate) but never the webhook / socket
+# proxy. --no-deps on the skip-migrate path leaves the DB untouched.
 compose_up() {
+  docker compose pull backend worker frontend
   if [ "${SKIP_MIGRATE}" = "--skip-migrate" ]; then
-    docker compose pull backend worker frontend
     docker compose up -d --wait --no-deps backend worker frontend
   else
-    docker compose pull
-    docker compose up -d --wait
+    docker compose up -d --wait backend worker frontend
   fi
 }
 
