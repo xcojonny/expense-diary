@@ -13,13 +13,13 @@ from app.domain.extraction import (
     parse_receipt_json,
     reconcile_confidence,
 )
-from app.domain.normalize import normalize_name
 from app.domain.upload import detect_media_type
 from app.integrations.llm import get_vision_llm
 from app.integrations.storage.local import get_storage
 from app.integrations.storage.pdf import first_page_image
 from app.models import Category, Item, LineItem, Receipt, ReceiptStatus
 from app.prompts import load_extraction_prompt
+from app.services.items import apply_product_mapping
 
 log = get_logger(__name__)
 
@@ -115,7 +115,6 @@ async def _add_line_item(
     item_cache: dict[str, Item],
 ) -> None:
     category_id = categories.get(parsed.category) if parsed.category else None
-
     line = LineItem(
         receipt_id=receipt.id,
         name=parsed.name,
@@ -127,49 +126,10 @@ async def _add_line_item(
         line_type=parsed.line_type,
         category_id=category_id,
     )
-
-    # Only real products anchor to an Item (the trend key). Deposit/discount
-    # lines are receipt-local and carry no normalized name.
-    if parsed.line_type == "product":
-        normalized = normalize_name(parsed.name)
-        if normalized:
-            line.normalized_name = normalized
-            item = await _resolve_item(
-                session, receipt.group_id, normalized, parsed.name, category_id, item_cache
-            )
-            line.item_id = item.id
-            if category_id is not None and item.category_id is None:
-                item.category_id = category_id
-
+    await apply_product_mapping(
+        session, line, group_id=receipt.group_id, category_id=category_id, cache=item_cache
+    )
     session.add(line)
-
-
-async def _resolve_item(
-    session: AsyncSession,
-    group_id: uuid.UUID,
-    normalized: str,
-    display_name: str,
-    category_id: uuid.UUID | None,
-    cache: dict[str, Item],
-) -> Item:
-    if normalized in cache:
-        return cache[normalized]
-    item = (
-        await session.execute(
-            select(Item).where(Item.group_id == group_id, Item.normalized_name == normalized)
-        )
-    ).scalar_one_or_none()
-    if item is None:
-        item = Item(
-            group_id=group_id,
-            normalized_name=normalized,
-            display_name=display_name,
-            category_id=category_id,
-        )
-        session.add(item)
-        await session.flush()  # need item.id for the line FK
-    cache[normalized] = item
-    return item
 
 
 async def _category_index(session: AsyncSession) -> dict[str, uuid.UUID]:

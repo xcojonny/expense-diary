@@ -20,8 +20,10 @@ The project is built in phases (see the task brief). This repo currently holds:
       polling:** upload endpoint (type/size-hardened), provider-agnostic vision
       adapter (openai/ollama/null), pure JSON parser + consistency check, ARQ
       worker (with a BackgroundTasks fallback), receipt/category endpoints, and
-      a functional upload page that polls until extraction finishes. **← you are here**
-- [ ] Phase 3 — Dashboard (receipt list, detail view with editable line items)
+      a functional upload page that polls until extraction finishes.
+- [x] **Phase 3 — Dashboard:** receipt list, and a detail view with editable
+      line items (add/edit/delete, header edit, confirm-review, delete receipt).
+      Edits re-map to the group's Item catalog exactly like extraction does. **← you are here**
 - [ ] Phase 4 — Analysis endpoints + report view with charts *(the heart)*
 - [ ] Phase 5 — Category management + manual correction
 

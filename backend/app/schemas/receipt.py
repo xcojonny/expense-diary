@@ -42,3 +42,30 @@ class ReceiptOut(BaseModel):
 class ReceiptDetailOut(ReceiptOut):
     error: str | None
     line_items: list[LineItemOut]
+
+
+class LineItemWrite(BaseModel):
+    """Editable line-item fields (manual correction). ``normalized_name`` and
+    ``item_id`` are derived server-side from name + type, never client-set."""
+
+    name: str
+    quantity: Decimal | None = None
+    unit: str | None = None
+    unit_price: Decimal | None = None
+    total_price: Decimal
+    vat_class: str | None = None
+    line_type: LineType = LineType.product
+    category_id: uuid.UUID | None = None
+
+
+class ReceiptUpdate(BaseModel):
+    """Partial update of the receipt header. Fields left unset stay unchanged;
+    ``status`` lets the user confirm a ``needs_review`` receipt as ``done``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_name: str | None = None
+    purchased_at: datetime | None = None
+    total: Decimal | None = None
+    currency: str | None = None
+    status: ReceiptStatus | None = None

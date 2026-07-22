@@ -29,19 +29,24 @@ const STATUS_STYLE: Record<ReceiptStatus, string> = {
     </p>
 
     <ul v-else class="divide-y rounded border bg-white">
-      <li v-for="r in receipts" :key="r.id" class="flex items-center justify-between p-3">
-        <div>
-          <div class="font-medium">{{ r.store_name ?? 'Unbekannter Markt' }}</div>
-          <div class="text-xs text-gray-500">
-            {{ r.purchased_at?.slice(0, 10) ?? r.created_at.slice(0, 10) }}
+      <li v-for="r in receipts" :key="r.id">
+        <NuxtLink
+          :to="`/bon/${r.id}`"
+          class="flex items-center justify-between p-3 hover:bg-gray-50"
+        >
+          <div>
+            <div class="font-medium">{{ r.store_name ?? 'Unbekannter Markt' }}</div>
+            <div class="text-xs text-gray-500">
+              {{ r.purchased_at?.slice(0, 10) ?? r.created_at.slice(0, 10) }}
+            </div>
           </div>
-        </div>
-        <div class="flex items-center gap-3">
-          <span v-if="r.total" class="text-sm">{{ r.total }} {{ r.currency }}</span>
-          <span class="rounded px-2 py-0.5 text-xs" :class="STATUS_STYLE[r.status]">
-            {{ r.status }}
-          </span>
-        </div>
+          <div class="flex items-center gap-3">
+            <span v-if="r.total" class="text-sm">{{ r.total }} {{ r.currency }}</span>
+            <span class="rounded px-2 py-0.5 text-xs" :class="STATUS_STYLE[r.status]">
+              {{ r.status }}
+            </span>
+          </div>
+        </NuxtLink>
       </li>
     </ul>
   </section>

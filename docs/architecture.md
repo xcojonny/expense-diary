@@ -143,6 +143,15 @@ Vertrag zu ändern.
 Das Frontend (`pages/upload.vue` + `composables/useReceiptPolling`) pollt nach
 dem Upload `GET /api/v1/receipts/{id}` (~2 s), bis ein Endzustand erreicht ist.
 
+### 3.1 Manuelle Korrektur (Phase 3)
+
+`pages/bon/[id].vue` erlaubt das Editieren von Kopf und Positionen
+(PATCH/POST/DELETE unter `/receipts/{id}` bzw. `/line-items`). Namens- oder
+Typänderungen laufen serverseitig durch dieselbe `services/items.apply_product_mapping`
+wie die Extraktion — eine korrigierte Position landet also am selben Item-Trend-Anker
+wie eine extrahierte, `normalized_name`/`item_id` werden nie vom Client gesetzt.
+„Als geprüft markieren" setzt `needs_review → done`.
+
 ## 4. Analyse-Ebene (Phase 4, das Herzstück)
 
 Aggregations-Queries + Endpoints (Details siehe

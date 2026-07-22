@@ -9,10 +9,17 @@ from app.api.deps import get_arq, get_current_group_id
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.domain.upload import detect_media_type
-from app.models import Receipt
-from app.schemas.receipt import ReceiptDetailOut, ReceiptOut
-from app.services import upload_service
+from app.models import LineItem, Receipt
+from app.schemas.receipt import (
+    LineItemOut,
+    LineItemWrite,
+    ReceiptDetailOut,
+    ReceiptOut,
+    ReceiptUpdate,
+)
+from app.services import receipt_edit_service, upload_service
 from app.services.extraction_service import run_extraction
+from app.services.receipt_edit_service import UnknownCategory
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
 
@@ -85,3 +92,92 @@ async def get_receipt(
     if receipt is None:
         raise HTTPException(status_code=404, detail="Bon nicht gefunden.")
     return receipt
+
+
+async def _get_owned_receipt(
+    db: AsyncSession, receipt_id: uuid.UUID, group_id: uuid.UUID
+) -> Receipt:
+    receipt = (
+        await db.execute(
+            select(Receipt).where(Receipt.id == receipt_id, Receipt.group_id == group_id)
+        )
+    ).scalar_one_or_none()
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="Bon nicht gefunden.")
+    return receipt
+
+
+async def _get_owned_line(
+    db: AsyncSession, receipt: Receipt, line_id: uuid.UUID
+) -> LineItem:
+    line = (
+        await db.execute(
+            select(LineItem).where(LineItem.id == line_id, LineItem.receipt_id == receipt.id)
+        )
+    ).scalar_one_or_none()
+    if line is None:
+        raise HTTPException(status_code=404, detail="Position nicht gefunden.")
+    return line
+
+
+@router.patch("/{receipt_id}", response_model=ReceiptOut)
+async def update_receipt(
+    receipt_id: uuid.UUID,
+    data: ReceiptUpdate,
+    db: AsyncSession = Depends(get_db),
+    group_id: uuid.UUID = Depends(get_current_group_id),
+) -> Receipt:
+    receipt = await _get_owned_receipt(db, receipt_id, group_id)
+    return await receipt_edit_service.update_receipt(db, receipt, data)
+
+
+@router.delete("/{receipt_id}", status_code=204)
+async def delete_receipt(
+    receipt_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    group_id: uuid.UUID = Depends(get_current_group_id),
+) -> None:
+    receipt = await _get_owned_receipt(db, receipt_id, group_id)
+    await receipt_edit_service.delete_receipt(db, receipt)
+
+
+@router.post("/{receipt_id}/line-items", response_model=LineItemOut, status_code=201)
+async def add_line_item(
+    receipt_id: uuid.UUID,
+    data: LineItemWrite,
+    db: AsyncSession = Depends(get_db),
+    group_id: uuid.UUID = Depends(get_current_group_id),
+) -> LineItem:
+    receipt = await _get_owned_receipt(db, receipt_id, group_id)
+    try:
+        return await receipt_edit_service.add_line_item(db, receipt, data)
+    except UnknownCategory as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/{receipt_id}/line-items/{line_id}", response_model=LineItemOut)
+async def update_line_item(
+    receipt_id: uuid.UUID,
+    line_id: uuid.UUID,
+    data: LineItemWrite,
+    db: AsyncSession = Depends(get_db),
+    group_id: uuid.UUID = Depends(get_current_group_id),
+) -> LineItem:
+    receipt = await _get_owned_receipt(db, receipt_id, group_id)
+    line = await _get_owned_line(db, receipt, line_id)
+    try:
+        return await receipt_edit_service.update_line_item(db, receipt, line, data)
+    except UnknownCategory as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/{receipt_id}/line-items/{line_id}", status_code=204)
+async def delete_line_item(
+    receipt_id: uuid.UUID,
+    line_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    group_id: uuid.UUID = Depends(get_current_group_id),
+) -> None:
+    receipt = await _get_owned_receipt(db, receipt_id, group_id)
+    line = await _get_owned_line(db, receipt, line_id)
+    await receipt_edit_service.delete_line_item(db, line)
