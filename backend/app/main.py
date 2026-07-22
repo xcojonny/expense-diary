@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import categories, health, receipts
+from app.api.v1 import analytics, categories, health, receipts
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import get_sessionmaker
@@ -67,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix=api)
     app.include_router(receipts.router, prefix=api)
     app.include_router(categories.router, prefix=api)
+    app.include_router(analytics.router, prefix=api)
 
     media_dir = Path(settings.media_dir)
     media_dir.mkdir(parents=True, exist_ok=True)

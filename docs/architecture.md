@@ -152,12 +152,31 @@ wie die Extraktion — eine korrigierte Position landet also am selben Item-Tren
 wie eine extrahierte, `normalized_name`/`item_id` werden nie vom Client gesetzt.
 „Als geprüft markieren" setzt `needs_review → done`.
 
-## 4. Analyse-Ebene (Phase 4, das Herzstück)
+## 4. Analyse-Ebene (Phase 4, das Herzstück — implementiert)
 
-Aggregations-Queries + Endpoints (Details siehe
-[Anforderungen](anforderungen.md)): Monatsbericht, „zu viel gekauft", „teure
-Lebensmittel", Preistrend pro Artikel, Vormonatsvergleich. Die reine
-Aggregationslogik lebt in `domain/` und ist der Testschwerpunkt.
+Architektur: `services/analytics_service` holt die relevanten Positionen als
+flache `PurchaseRecord`s (Join `line_items`×`receipts`×`categories`×`items`,
+Zeitfenster per `coalesce(purchased_at, created_at)`). Die **reine** Rechenlogik
+liegt in `domain/aggregation` und ist der Testschwerpunkt (Unit-Tests ohne DB).
+
+Endpoints unter `/api/v1/analytics` (alle gruppen-scoped, Monat per `?year=&month=`,
+Default = laufender Monat):
+
+- `GET /monthly` — Gesamtausgaben, Produkt/Pfand/Rabatt-Summen, Bon-Anzahl,
+  Aufschlüsselung nach Kategorie und Store, Top-N teuerste Einzelpositionen.
+- `GET /overbought` — Artikel nach Häufigkeit (dann Ausgabe): „was kaufe ich zu viel".
+- `GET /expensive` — Artikel nach Gesamtausgabe **und** nach Ø-Stückpreis, plus
+  Anteil am Lebensmittelbudget (`is_food` schließt Nicht-Lebensmittel-Kategorien aus).
+- `GET /price-trend/{item_id}` — Ø-Stückpreis pro Tag über die Zeit (für den Chart).
+- `GET /compare` — Vormonatsvergleich (Gesamt + je Kategorie, Delta + Prozent).
+
+Frontend: `pages/bericht.vue` mit Monatsnavigation, Kategorie-/Store-Balken,
+Listen und einem abhängigkeitsfreien SVG-Preisverlauf (`components/TrendChart.vue`)
+— ein Artikel-Klick lädt dessen Trend. Geldbeträge kommen als Strings (Decimal)
+und werden per `utils/format` formatiert.
+
+Beträge: Geld als `Numeric`/`Decimal`; JSON serialisiert Decimals als String, das
+Frontend formatiert (kein Float-Rundungsfehler).
 
 ## 5. Offene Entscheidungen
 

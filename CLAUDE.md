@@ -71,14 +71,14 @@ backend/app/
 ├── db/             # engine, sessionmaker, Base + naming conventions
 ├── models/         # group, receipt, line_item, category, item
 ├── schemas/        # Pydantic v2 DTOs (receipt, category)
-├── domain/         # ★ PURE, I/O-free logic — normalize, extraction, upload (+ aggregation, phase 4)
-├── services/       # use-cases: upload, extraction, group (analysis in phase 4)
+├── domain/         # ★ PURE, I/O-free logic — normalize, extraction, upload, aggregation
+├── services/       # use-cases: upload, extraction, group, items, receipt_edit, analytics
 ├── integrations/
 │   ├── llm/        #   vision-LLM adapter: base protocol + openai_compatible / null
 │   └── storage/    #   local media storage + pdf first-image
 ├── prompts/        # editable extraction prompt(s) + loader
 ├── workers/        # ARQ settings + tasks (extract_receipt_task)
-└── api/v1/         # health, receipts, categories (analytics later); deps.py = tenancy seam
+└── api/v1/         # health, receipts, categories, analytics; deps.py = tenancy seam
 ```
 
 **The one architectural rule that must not be broken:** `domain/` imports
@@ -107,8 +107,9 @@ Frontend types track the backend OpenAPI schema (`pnpm generate:api` →
 
 ## Testing
 
-- `backend/tests/unit/` — `domain/` logic (normalize; aggregation in phase 4).
-  Fast, no I/O. **Prefer adding coverage here** for domain logic.
+- `backend/tests/unit/` — `domain/` logic (normalize, extraction parsing,
+  aggregation math). Fast, no I/O. **Prefer adding coverage here** for domain logic;
+  the analysis aggregations are the critical logic and are unit-tested here.
 - `backend/tests/integration/` — API against a **real** Postgres (`expense_test`).
   DB is migrated + seeded once per session; `app_client` yields an httpx client
   over the ASGI app; receipts/items are cleared between tests (categories stay).

@@ -23,8 +23,12 @@ The project is built in phases (see the task brief). This repo currently holds:
       a functional upload page that polls until extraction finishes.
 - [x] **Phase 3 — Dashboard:** receipt list, and a detail view with editable
       line items (add/edit/delete, header edit, confirm-review, delete receipt).
-      Edits re-map to the group's Item catalog exactly like extraction does. **← you are here**
-- [ ] Phase 4 — Analysis endpoints + report view with charts *(the heart)*
+      Edits re-map to the group's Item catalog exactly like extraction does.
+- [x] **Phase 4 — Analysis layer** *(the heart)*: pure aggregation domain
+      (monthly report, over-buying, expensive food + budget share, per-item
+      price trend, previous-month comparison) with the math unit-tested; analytics
+      endpoints; and a report page with month navigation, category/store bars,
+      and a dependency-free SVG price-trend chart. **← you are here**
 - [ ] Phase 5 — Category management + manual correction
 
 ## Stack
