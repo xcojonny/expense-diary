@@ -267,7 +267,7 @@ In Authelias `identity_providers.oidc.clients` einen vertraulichen Client anlege
 ```
 
 Backend-ENV: `OIDC_ISSUER=https://auth.example.org`, `OIDC_CLIENT_ID`,
-`OIDC_CLIENT_SECRET` (siehe `deploy/.env.example`).
+`OIDC_CLIENT_SECRET` (siehe `.env.example` im Repo-Root).
 
 ## 8. Release & Deployment
 
@@ -276,7 +276,7 @@ Backend-ENV: `OIDC_ISSUER=https://auth.example.org`, `OIDC_CLIENT_ID`,
 (Tags `latest`, `sha-<sha>`, bei Tags `semver`) und schiebt sie nach GHCR; das
 Git-SHA wird als `GIT_SHA` eingebacken (`/api/v1/version`).
 
-**Pull-Deploy per Webhook** (wie cooking-jonelli, `deploy/infra/webhook/`): der
+**Pull-Deploy per Webhook** (wie cooking-jonelli, `webhook/`): der
 `deploy`-Job schickt nach grüner CI einen **HMAC-SHA256-signierten**
 `{sha, timestamp}`-Body an `DEPLOY_WEBHOOK_URL` (`X-Hub-Signature-256`, verifiziert
 gegen `DEPLOY_WEBHOOK_SECRET`). Der [`webhook`](https://github.com/adnanh/webhook)-
@@ -285,4 +285,4 @@ Container ruft `deploy.sh` auf: Replay-Schutz (>5 min verworfen), `flock`,
 **Auto-Rollback** auf den vorherigen Tag bei nicht-healthy Zustand, optionale
 ntfy-Benachrichtigung. Ohne gesetzte Secrets ist der Deploy-Job ein No-op.
 Reverse-Proxy davor für TLS + Routing `/api`,`/media` → Backend, Rest → Frontend.
-Details: `deploy/README.md`.
+Details: `DEPLOY.md`.

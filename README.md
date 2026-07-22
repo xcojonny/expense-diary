@@ -101,7 +101,7 @@ vitest). `make help` lists every target.
 ## Environment variables
 
 Backend settings live in `backend/app/core/config.py`; template:
-`backend/.env.example` (local dev) and `deploy/.env.example` (production).
+`backend/.env.example` (local dev) and `.env.example` at the repo root (production).
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -144,10 +144,13 @@ the header, and admins invite members by email.
 
 ## Deployment
 
-`deploy/docker-compose.yml` runs the full stack (db, redis, one-shot migrate,
-backend, worker, frontend). Configure via `deploy/.env` (template:
-`deploy/.env.example`) and front it with a reverse proxy that terminates TLS and
-routes `/api` + `/media` to the backend and everything else to the frontend.
+The deploy files live at the repo root, so updating is `git pull &&
+docker compose pull && docker compose up -d`. `docker-compose.yml` runs the full
+stack (db, redis, one-shot migrate, backend, worker, frontend); configure via
+`.env` (template: `.env.example`). Ingress is via built-in **Traefik labels**
+(`APP_HOST`, external `proxy` network) — `/api/` + `/media` → backend, the rest →
+frontend. `docker-compose.infra.yml` (+ `webhook/`) is the optional pull-deploy
+webhook. Full guide: [`DEPLOY.md`](DEPLOY.md).
 
 ## License
 

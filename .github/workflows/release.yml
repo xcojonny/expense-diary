@@ -1,7 +1,7 @@
 name: Release
 
 # Build + push the backend and frontend container images to GHCR. Runs after a
-# green CI on main, on a version tag (v*), or manually. deploy/docker-compose.yml
+# green CI on main, on a version tag (v*), or manually. docker-compose.yml
 # pulls ghcr.io/<owner>/expense-diary-{backend,frontend} — pull the new tag on
 # your host to deploy (no deploy mechanism is assumed here).
 

@@ -3,7 +3,7 @@
 # runs `docker compose pull && up -d --wait` in the app directory.
 #
 # Put this behind your reverse proxy with TLS and expose only /hooks/deploy.
-# Configure via .env here (DEPLOY_WEBHOOK_SECRET must match the GitHub secret).
+# Shares the root .env (DEPLOY_WEBHOOK_SECRET must match the GitHub secret).
 #
 # Security note: this mounts the Docker socket, which is powerful. For stricter
 # setups, front it with tecnativa/docker-socket-proxy and set DOCKER_HOST.
