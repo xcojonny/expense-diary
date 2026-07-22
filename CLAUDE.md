@@ -72,7 +72,7 @@ backend/app/
 ├── models/         # group, receipt, line_item, category, item
 ├── schemas/        # Pydantic v2 DTOs (receipt, category)
 ├── domain/         # ★ PURE, I/O-free logic — normalize, extraction, upload, aggregation
-├── services/       # use-cases: upload, extraction, group, items, receipt_edit, analytics
+├── services/       # use-cases: upload, extraction, group, items, receipt_edit, analytics, category
 ├── integrations/
 │   ├── llm/        #   vision-LLM adapter: base protocol + openai_compatible / null
 │   └── storage/    #   local media storage + pdf first-image

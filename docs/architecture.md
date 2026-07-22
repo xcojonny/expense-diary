@@ -183,8 +183,25 @@ Frontend formatiert (kein Float-Rundungsfehler).
 - Auth: noch nicht implementiert (privates Homelab). Magic-Link-Login (an
   cooking-jonelli orientiert) ist als späterer Baustein vorgesehen und greift
   in denselben Tenancy-Seam wie unten.
-- Kategorie-Hierarchie: aktuell zweistufig geseedet (Top-Level = die vom Prompt
-  vergebenen Kategorien, plus einige Unterkategorien). Tiefe bleibt offen.
+- Kategorie-Hierarchie: geseedet (Top-Level = die vom Prompt vergebenen
+  Kategorien, plus einige Unterkategorien) und via CRUD verwaltbar (Phase 5,
+  siehe §7). Tiefe ist nicht begrenzt.
+
+## 7. Kategorien-Verwaltung (Phase 5)
+
+Kategorien sind geteilte Stammdaten (nicht gruppen-scoped). CRUD unter
+`/api/v1/categories` (`POST`/`PATCH`/`DELETE`), Logik in `services/category_service`:
+
+- Doppelte Namen innerhalb desselben Elternteils werden abgelehnt (400) — der
+  Self-FK allein erzwingt das bei `parent_id IS NULL` nicht (NULLS DISTINCT).
+- Zyklen beim Umhängen werden abgelehnt (400): eine Kategorie kann nicht
+  Nachfahre ihrer selbst werden.
+- Beim Löschen werden Unterkategorien zu Top-Level (`parent_id` FK SET NULL) und
+  Positions-/Item-Verweise auf `NULL` gesetzt — keine Kaskadenlöschung von Daten.
+
+Frontend: `pages/kategorien.vue` (anlegen, umbenennen, umhängen, löschen). Die
+manuelle Positions-Korrektur (Phase 3) nutzt dieselbe Kategorienliste im
+Bon-Detail-Dropdown.
 
 ## 6. Tenancy / Gruppen
 

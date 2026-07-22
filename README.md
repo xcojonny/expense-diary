@@ -28,8 +28,12 @@ The project is built in phases (see the task brief). This repo currently holds:
       (monthly report, over-buying, expensive food + budget share, per-item
       price trend, previous-month comparison) with the math unit-tested; analytics
       endpoints; and a report page with month navigation, category/store bars,
-      and a dependency-free SVG price-trend chart. **← you are here**
-- [ ] Phase 5 — Category management + manual correction
+      and a dependency-free SVG price-trend chart.
+- [x] **Phase 5 — Category management + manual correction:** category CRUD
+      (create/rename/reparent/delete) with duplicate-name and cycle guards and a
+      management page; manual line-item correction was delivered in phase 3. **← done**
+
+All five build phases are implemented.
 
 ## Stack
 

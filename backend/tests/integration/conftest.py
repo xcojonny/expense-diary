@@ -36,13 +36,19 @@ async def app_client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture(autouse=True)
 async def _clean_state() -> AsyncIterator[None]:
-    """Fresh receipts per test; seeded master data (categories) stays."""
-    yield
+    """Reset to a pristine state *before* each test: no receipts/items and the
+    seeded category tree only. Categories are reset too (not just left alone)
+    because phase-5 tests mutate that master data — otherwise created/renamed
+    categories would leak across tests and re-runs."""
     from app.db.session import get_sessionmaker
+    from app.seed import seed_categories
 
     async with get_sessionmaker()() as session:
-        # line_items cascade from receipts (FK ON DELETE CASCADE); items are
-        # top-level trend anchors not reachable by cascade, so clear them too.
+        # line_items cascade from receipts (FK ON DELETE CASCADE); items and
+        # categories aren't reachable by that cascade, so clear them explicitly.
         await session.execute(sa.text("DELETE FROM receipts"))
         await session.execute(sa.text("DELETE FROM items"))
+        await session.execute(sa.text("DELETE FROM categories"))
         await session.commit()
+        await seed_categories(session)  # restore the pristine seed tree
+    yield
