@@ -135,6 +135,131 @@ def parse_receipt_json(raw: str) -> ParsedReceipt:
     return receipt
 
 
+# -- Text (digital eBon) parsing ---------------------------------------------
+# Many receipt PDFs (REWE, Kaufland, Lidl … digital eBons) are *text* PDFs, not
+# scans — their content is extractable text with a very regular layout. We parse
+# that directly, so these receipts are recognized without any vision LLM. Unknown
+# layouts yield few/no items and get routed to needs_review by the sum check.
+
+_TEXT_AMOUNT = r"-?\d{1,3}(?:\.\d{3})*,\d{2}"
+# An item line: "NAME <gap> 1,99 B" (optional VAT letter, optional trailing "*").
+_ITEM_LINE = re.compile(
+    rf"^(?P<name>.+?)\s{{2,}}(?P<amount>{_TEXT_AMOUNT})\s*(?P<vat>[A-Za-z])?\s*\*?\s*$"
+)
+# A quantity detail line under the item: "2 Stk x 1,45" or "0,512 kg x 5,99 EUR/kg".
+_QTY_COUNT = re.compile(
+    r"^(?P<qty>\d+(?:,\d+)?)\s*(?P<unit>Stk|St)\.?\s*[x\u00d7]\s*(?P<price>\d+(?:,\d+)?)",
+    re.IGNORECASE,
+)
+_QTY_WEIGHT = re.compile(
+    r"^(?P<qty>\d+(?:,\d+)?)\s*(?P<unit>kg|g|l|ml)\s*[x\u00d7]\s*(?P<price>\d+(?:,\d+)?)",
+    re.IGNORECASE,
+)
+_SUMME = re.compile(rf"^SUMME\b.*?(?P<amount>{_TEXT_AMOUNT})\s*$", re.IGNORECASE)
+_DEPOSIT_KEYWORDS = ("PFAND", "LEERG")  # LEERG. / LEERGUT → deposit line
+
+
+def _de_amount(text: str) -> Decimal | None:
+    """Parse a German-formatted amount ("1.234,56", "-0,60") to Decimal."""
+    try:
+        return Decimal(text.strip().replace(".", "").replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _spaced_letters(line: str) -> bool:
+    """True for a header printed letter-spaced, e.g. REWE's "R E W E"."""
+    tokens = line.split()
+    return len(tokens) >= 2 and all(len(token) == 1 for token in tokens)
+
+
+def parse_receipt_text(text: str) -> ParsedReceipt:
+    """Parse a German digital-receipt (eBon) *text* dump into a ParsedReceipt.
+
+    Rule-based and LLM-free: item lines carry the price (with the VAT-class
+    letter), an optional following line the quantity/unit, and a ``SUMME`` line
+    the total. Only lines above ``SUMME`` are treated as items, so payment and
+    footer lines are ignored. The upstream sum check catches a misparse.
+    """
+    lines = [line.rstrip() for line in text.splitlines()]
+    receipt = ParsedReceipt()
+
+    # Store name: first meaningful header line (REWE prints it spaced: "R E W E").
+    for line in lines[:8]:
+        stripped = line.strip()
+        if len(stripped) >= 2 and any(c.isalpha() for c in stripped) and "EUR" not in stripped:
+            receipt.store_name = (
+                "".join(stripped.split())
+                if _spaced_letters(stripped)
+                else re.sub(r"\s{2,}", " ", stripped)
+            )
+            break
+
+    # Total + the cutoff below which we stop treating lines as items.
+    total_idx: int | None = None
+    for i, line in enumerate(lines):
+        match = _SUMME.match(line.strip())
+        if match:
+            receipt.total = _de_amount(match.group("amount"))
+            total_idx = i
+            break
+
+    current: ParsedLineItem | None = None
+    for line in lines[:total_idx] if total_idx is not None else lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        qty = _QTY_COUNT.match(stripped) or _QTY_WEIGHT.match(stripped)
+        if qty is not None:  # a quantity detail line — attach to the item above
+            if current is not None:
+                current.quantity = _de_amount(qty.group("qty"))
+                current.unit = qty.group("unit")
+                current.unit_price = _de_amount(qty.group("price"))
+            continue
+        item = _ITEM_LINE.match(stripped)
+        if item is None:
+            continue
+        name = item.group("name").strip()
+        amount = _de_amount(item.group("amount"))
+        if amount is None or not any(c.isalpha() for c in name):
+            continue  # header/address noise without a real product name
+        upper = name.upper()
+        if any(keyword in upper for keyword in _DEPOSIT_KEYWORDS):
+            line_type = "deposit"
+        elif amount < 0:
+            line_type = "discount"
+        else:
+            line_type = "product"
+        vat = item.group("vat")
+        current = ParsedLineItem(
+            name=name,
+            total_price=amount,
+            vat_class=vat.upper() if vat else None,
+            line_type=line_type,
+        )
+        receipt.items.append(current)
+
+    joined = "\n".join(lines)
+    date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})", joined)
+    time_match = re.search(r"(\d{2}:\d{2}(?::\d{2})?)", joined)
+    if date_match is not None:
+        try:
+            when = datetime.strptime(date_match.group(1), "%d.%m.%Y")
+            if time_match is not None:
+                parts = [int(p) for p in time_match.group(1).split(":")]
+                when = when.replace(
+                    hour=parts[0], minute=parts[1], second=parts[2] if len(parts) > 2 else 0
+                )
+            receipt.purchased_at = when
+        except ValueError:
+            pass
+
+    # Only auto-complete when we have items *and* a total to reconcile against;
+    # otherwise force manual review (confidence "low").
+    receipt.confidence = "high" if (receipt.items and receipt.total is not None) else "low"
+    return receipt
+
+
 def reconcile_confidence(receipt: ParsedReceipt) -> tuple[str, bool]:
     """Return (confidence, needs_review) after a plausibility check.
 

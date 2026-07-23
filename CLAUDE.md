@@ -169,6 +169,12 @@ Frontend types track the backend OpenAPI schema (`pnpm generate:api` →
   endpoint falls back to FastAPI BackgroundTasks when Redis is down. All output
   interpretation lives in the pure `domain/extraction.py` (parse + consistency),
   so test it there — not through the service.
+- **Digital eBon PDFs are parsed as text, no LLM.** Most receipt PDFs (REWE & co.)
+  are *text* PDFs, not scans. `extraction_service` first tries
+  `storage/pdf.extract_text` + the rule-based `domain/extraction.parse_receipt_text`
+  (LLM-free); only when that finds no items does it fall back to the embedded-image
+  + vision path. The item-sum-vs-`total` check routes a misparse to `needs_review`.
+  So a text eBon works with `LLM_PROVIDER=none`; a photo/scan still needs a vision model.
 - **`backend/.env.example` targets non-Docker local dev** — `MEDIA_DIR` is
   relative (`./.data/media`); the Docker image uses `/data/media`.
 

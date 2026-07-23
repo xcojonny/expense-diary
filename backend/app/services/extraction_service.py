@@ -11,12 +11,13 @@ from app.domain.extraction import (
     ParsedLineItem,
     ParsedReceipt,
     parse_receipt_json,
+    parse_receipt_text,
     reconcile_confidence,
 )
 from app.domain.upload import detect_media_type
 from app.integrations.llm import get_vision_llm
 from app.integrations.storage.local import get_storage
-from app.integrations.storage.pdf import first_page_image
+from app.integrations.storage.pdf import extract_text, first_page_image
 from app.models import Category, Item, LineItem, Receipt, ReceiptStatus
 from app.prompts import load_extraction_prompt
 from app.services.items import apply_product_mapping
@@ -57,9 +58,18 @@ async def _extract(session: AsyncSession, receipt: Receipt) -> None:
     media_type = detect_media_type(image_bytes)
 
     if media_type == "application/pdf":
+        # Digital eBons (REWE & co.) are text PDFs — parse the text directly,
+        # no vision LLM needed. Only fall back to the image path when a text
+        # parse finds no line items (e.g. a scanned-image PDF).
+        text = extract_text(image_bytes)
+        if text:
+            parsed = parse_receipt_text(text)
+            if parsed.items:
+                await _apply(session, receipt, parsed, text)
+                return
         extracted = first_page_image(image_bytes)
         if extracted is None:
-            # No rasterizable image → can't vision-scan; hand to manual review.
+            # No text and no rasterizable image → can't scan; hand to review.
             receipt.status = ReceiptStatus.needs_review
             await session.commit()
             return

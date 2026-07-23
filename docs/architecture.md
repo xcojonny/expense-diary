@@ -125,11 +125,16 @@ Vertrag zu ändern.
    (`workers/tasks.extract_receipt_task`); ist kein Redis/Worker verfügbar,
    fällt der Endpoint auf **FastAPI BackgroundTasks** zurück (beides laut Brief
    erlaubt). Der Job setzt `status=processing`.
-3. `services/extraction_service` liest die Datei (PDF → erstes eingebettetes
-   Bild via `integrations/storage/pdf`), schickt sie über den Vision-Adapter
-   (`integrations/llm`) mit dem Prompt aus `prompts/receipt_extraction.de.txt`
-   und übergibt die rohe Antwort dem **reinen** Parser
-   (`domain/extraction.parse_receipt_json`).
+3. `services/extraction_service` liest die Datei und wählt den Pfad:
+   - **Text-PDF (digitaler eBon, z. B. REWE):** `integrations/storage/pdf.extract_text`
+     zieht den eingebetteten Text; der **reine, LLM-freie** Parser
+     `domain/extraction.parse_receipt_text` erkennt Positionen, Mengen/Einheiten,
+     Pfand/Rabatt und `SUMME` direkt. Das ist der Normalfall für Kassenbon-PDFs
+     und funktioniert ganz ohne Modell.
+   - **Bild oder gescanntes PDF:** liefert der Text-Parser keine Positionen, wird
+     das (bei PDFs erste eingebettete) Bild über den Vision-Adapter
+     (`integrations/llm`) mit dem Prompt `prompts/receipt_extraction.de.txt`
+     geschickt; die rohe JSON-Antwort geht an `domain/extraction.parse_receipt_json`.
 4. Ergebnis → `Receipt` + `LineItem`s; Produkt-Positionen bekommen
    `normalized_name` und werden pro Gruppe auf `Item` gemappt (Trend-Anker),
    Deposit/Discount bleiben receipt-lokal. `domain/extraction.reconcile_confidence`

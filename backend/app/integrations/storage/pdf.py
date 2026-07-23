@@ -6,6 +6,21 @@ from app.domain.upload import detect_media_type
 log = get_logger(__name__)
 
 
+def extract_text(data: bytes) -> str | None:
+    """Pull the embedded text out of a digital-receipt PDF (REWE & co. eBons are
+    text, not scans). Returns the concatenated page text, or None when there's
+    no meaningful text (a scanned PDF) — the caller then tries the image path."""
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(data))
+        text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+    except Exception as exc:  # defensive: malformed PDF is an ordinary case
+        log.warning("pdf text extraction failed", error=str(exc))
+        return None
+    return text if len(text) >= 20 else None
+
+
 def first_page_image(data: bytes) -> tuple[bytes, str] | None:
     """Best-effort: pull the first embedded image out of a (scanned) PDF so it
     can be sent to the vision LLM. Returns (image_bytes, media_type) or None
