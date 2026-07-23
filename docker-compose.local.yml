@@ -10,15 +10,15 @@
 # Note: with APP_ENV=production the refresh cookie needs HTTPS — set
 # COOKIE_SECURE=false in .env if you want to test login over http://localhost.
 
+# Only `backend` carries the build for the shared backend image; migrate + worker
+# reference the same image: tag and reuse the built image (declaring build: on
+# all three makes `up --build` build the identical tag 3× → BuildKit "already
+# exists"). `make build` builds backend + frontend; migrate/worker inherit it.
 services:
-  migrate:
-    build: ./backend
   backend:
     build: ./backend
     ports:
       - "${LOCAL_API_PORT:-8000}:8000"
-  worker:
-    build: ./backend
   frontend:
     build: ./frontend
     ports:
