@@ -51,6 +51,13 @@ async def get_current_user(
     return user
 
 
+async def require_instance_admin(user: User = Depends(get_current_user)) -> User:
+    """Guard for instance-wide admin endpoints (e.g. the log view)."""
+    if not user.is_instance_admin:
+        raise HTTPException(status_code=403, detail="Nur Instanz-Admins dürfen das.")
+    return user
+
+
 async def get_current_group_id(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),

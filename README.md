@@ -112,10 +112,10 @@ Backend settings live in `backend/app/core/config.py`; template:
 | `MEDIA_DIR` | `./.data/media` (dev) / `/data/media` (Docker) | Uploaded receipt files |
 | `DEFAULT_LOCALE` | `de` | Default UI/mail language |
 | `UPLOAD_MAX_BYTES` | `15728640` | Max receipt file size (15 MiB) |
-| `LLM_PROVIDER` | `none` | `none` \| `openai` \| `ollama` — `none` = rule-based fallback |
+| `LLM_PROVIDER` | `none` | `none` \| `openai` \| `ollama` — `none` = rule-based fallback (only used for photos/scans; text eBons need no LLM) |
 | `LLM_API_KEY` | – | API key for the vision LLM |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible or Ollama endpoint |
-| `LLM_MODEL` | `gpt-4o-mini` | Vision model name |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible or Ollama endpoint. OpenRouter: `https://openrouter.ai/api/v1` (`LLM_PROVIDER=openai`) |
+| `LLM_MODEL` | `gpt-4o-mini` | Vision model name (OpenRouter namespaces it, e.g. `openai/gpt-4o-mini`) |
 | `LLM_TIMEOUT_SECONDS` | `90` | Per-request LLM timeout |
 | `SECRET_KEY` | `change-me` | JWT signing — set a strong value in prod |
 | `INITIAL_ADMIN_EMAIL` | – | Bootstrapped active admin + default-group owner |

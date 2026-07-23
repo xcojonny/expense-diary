@@ -1,16 +1,22 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 
 const auth = useAuthStore()
 
-const links = [
-  { to: '/', label: 'Dashboard' },
-  { to: '/upload', label: 'Bon hochladen' },
-  { to: '/bericht', label: 'Bericht' },
-  { to: '/kategorien', label: 'Kategorien' },
-  { to: '/gruppe', label: 'Gruppe' },
-  { to: '/einstellungen', label: 'Einstellungen' },
-]
+const links = computed(() => {
+  const base = [
+    { to: '/', label: 'Dashboard' },
+    { to: '/upload', label: 'Bon hochladen' },
+    { to: '/bericht', label: 'Bericht' },
+    { to: '/kategorien', label: 'Kategorien' },
+    { to: '/gruppe', label: 'Gruppe' },
+    { to: '/einstellungen', label: 'Einstellungen' },
+  ]
+  // Instance-admin-only areas.
+  if (auth.user?.is_instance_admin) base.push({ to: '/admin', label: 'Logs' })
+  return base
+})
 
 async function logout() {
   await auth.logout()
