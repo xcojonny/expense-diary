@@ -5,10 +5,10 @@ from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ratelimit import RateLimiter
-from app.core.security import decode_access_token
+from app.core.security import API_TOKEN_PREFIX, decode_access_token
 from app.db.session import get_db
 from app.models import User
-from app.services import group_service
+from app.services import group_service, token_service
 
 REFRESH_COOKIE = "refresh_token"
 
@@ -30,10 +30,17 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
     authorization: str | None = Header(default=None),
 ) -> User:
-    """Resolve the authenticated user from the Bearer access token."""
+    """Resolve the authenticated user from the Bearer credential: a short-lived
+    session JWT (browser) or a personal API token (``hbk_…``, headless clients
+    like the iOS upload Shortcut). Both land on the same tenancy seam."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Nicht angemeldet.")
     token = authorization.split(" ", 1)[1]
+    if token.startswith(API_TOKEN_PREFIX):
+        user = await token_service.user_for_token(db, token)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Ungültiges API-Token.")
+        return user
     try:
         payload = decode_access_token(token)
     except jwt.PyJWTError as exc:

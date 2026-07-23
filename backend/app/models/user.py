@@ -77,3 +77,20 @@ class OidcIdentity(Base, UUIDPkMixin, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id", ondelete="CASCADE"))
     issuer: Mapped[str]
     subject: Mapped[str]
+
+
+class ApiToken(Base, UUIDPkMixin, TimestampMixin):
+    """Long-lived personal access token for headless clients (e.g. an iOS
+    Shortcut that uploads a receipt straight from the share sheet). Only the
+    SHA-256 hash is stored; the raw token (shown once, ``hbk_`` prefix) travels
+    in the ``Authorization: Bearer`` header. No expiry — revoke to kill it."""
+
+    __tablename__ = "api_tokens"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str]  # user-facing label, e.g. "iOS Kurzbefehl"
+    token_hash: Mapped[str] = mapped_column(unique=True)
+    last_used_at: Mapped[datetime | None]
+    revoked_at: Mapped[datetime | None]

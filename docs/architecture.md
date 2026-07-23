@@ -251,6 +251,13 @@ Familie noch ein lebendes Token hat.
   `(issuer, subject)` → lokaler User (Anlage bei Erstlogin).
 - **Einladungen** (`/groups/invitations` → Mail → `/auth/invitations/accept`):
   legt/aktiviert den User und die Mitgliedschaft an.
+- **Persönliche API-Tokens** (`api_tokens`, verwaltet unter `/me/tokens`): langlebige
+  Bearer-Tokens für headless-Clients — v. a. der iOS-Kurzbefehl, der einen Bon direkt
+  aus dem Teilen-Menü nach `POST /receipts` hochlädt (iOS erlaubt einer PWA kein
+  Share-Target, daher der Kurzbefehl-Umweg). Präfix `hbk_`, nur als SHA-256-Hash
+  gespeichert, bei Erstellung einmalig im Klartext gezeigt, widerrufbar. `get_current_user`
+  akzeptiert JWT **oder** ein solches Token; die Gruppen-/Tenancy-Auflösung ist danach
+  identisch (X-Group-Id bzw. früheste Mitgliedschaft).
 
 Frontend: `stores/auth` (Bootstrap via `/auth/refresh`), globaler Route-Guard,
 `pages/login.vue` (Magic-Link + SSO-Button + Token/Invite/SSO-Callback),

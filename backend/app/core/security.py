@@ -17,6 +17,18 @@ def generate_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+# Personal API tokens are prefixed so they're recognizable in an Authorization
+# header (vs. a JWT), greppable if they ever leak, and cheaply distinguishable
+# by the auth dependency without a decode attempt.
+API_TOKEN_PREFIX = "hbk_"
+
+
+def generate_api_token() -> str:
+    """A long-lived personal API token (raw value, shown once). Only its hash
+    is stored; the prefix marks it as an API token."""
+    return f"{API_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 

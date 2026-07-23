@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 
 from app.api.deps import get_current_user
-from app.api.v1 import analytics, auth, categories, groups, health, me, receipts
+from app.api.v1 import analytics, auth, categories, groups, health, me, receipts, tokens
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import get_sessionmaker
@@ -84,6 +84,7 @@ def create_app() -> FastAPI:
     # the rest carry an explicit get_current_user dependency.
     protected = [Depends(get_current_user)]
     app.include_router(me.router, prefix=api)
+    app.include_router(tokens.router, prefix=api, dependencies=protected)
     app.include_router(groups.router, prefix=api)
     app.include_router(receipts.router, prefix=api)
     app.include_router(categories.router, prefix=api, dependencies=protected)

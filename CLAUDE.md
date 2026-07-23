@@ -134,7 +134,9 @@ Frontend types track the backend OpenAPI schema (`pnpm generate:api` →
 - **Polling, not WebSocket.** Receipt status is polled (~2 s) by design — the
   backend stays stateless. Don't add a WebSocket without revisiting that.
 - **Auth + tenancy via one seam.** Everything except `/healthz` and `/auth/*`
-  requires a session. `api/deps.get_current_user` resolves the Bearer JWT;
+  requires a session. `api/deps.get_current_user` resolves the Bearer credential —
+  a session JWT **or** a personal API token (`hbk_…`, table `api_tokens`, managed at
+  `/me/tokens`, for headless clients like the iOS upload Shortcut);
   `get_current_group_id` resolves the active household from the `X-Group-Id`
   header (membership-checked) else the earliest membership. Depend on those in
   every new endpoint — never hard-code a group. `Item` is unique per

@@ -9,6 +9,7 @@ const links = [
   { to: '/bericht', label: 'Bericht' },
   { to: '/kategorien', label: 'Kategorien' },
   { to: '/gruppe', label: 'Gruppe' },
+  { to: '/einstellungen', label: 'Einstellungen' },
 ]
 
 async function logout() {
