@@ -143,9 +143,13 @@ Frontend types track the backend OpenAPI schema (`pnpm generate:api` →
   own session: short-lived JWT access token (in memory) + rotating refresh token
   (httpOnly cookie, hashed, `/auth/refresh` rotates). `COOKIE_SECURE=false` for
   plain-HTTP dev, else the refresh cookie isn't sent.
-- **Magic links are browser-bound (Claude.ai-style pairing codes).**
+- **Magic-link browser-binding is opt-in (`MAGIC_LINK_REQUIRE_SAME_BROWSER`,
+  default `false`).** Off — the homelab default — a valid single-use, short-lived
+  link logs you in wherever it's opened (mobile mail apps open the link in a
+  separate in-app browser, so binding-on would otherwise strand the login).
+  On (`=true`, for shared/multi-user instances, Claude.ai-style pairing codes):
   `/auth/magic-link` sets a stable per-browser `login_request` cookie (only its
-  hash is stored on the token). Opened in the same browser → session; opened
+  hash is stored on the token); opened in the same browser → session, opened
   elsewhere → `{status:"code"}` and the requesting browser finishes via
   `/auth/verify-code` (code shown only on the verify page, never mailed; useless
   without the cookie, 5 attempts/token, IP rate-limited, HMAC-derived — never

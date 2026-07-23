@@ -232,15 +232,19 @@ bereits rotiertes Token erneut vorgezeigt, wird die ganze Familie widerrufen
 Familie noch ein lebendes Token hat.
 
 - **Magic-Link** (`/auth/magic-link` → Mail → `/auth/verify`): Single-Use,
-  kurzlebig, **browser-gebunden** (Claude.ai-Prinzip). `/auth/magic-link` setzt
-  ein stabiles `login_request`-Cookie (nur dessen Hash landet am Token). Öffnet
-  man den Link im selben Browser → Session; woanders → `{status:"code", code}`,
-  und der ursprüngliche Browser schließt über `/auth/verify-code` ab (der Code
-  steht nie in der Mail, nur auf der Verify-Seite; nutzlos ohne das Cookie,
-  5 Fehlversuche pro Token, IP-Rate-Limit, HMAC-abgeleitet — nie gespeichert).
-  Die Login-Seite pollt `/auth/login-status`. Kein User-Enumeration (immer 202,
-  Redis-Rate-Limits pro E-Mail/IP). Mail via SMTP; ohne `SMTP_HOST` loggt der
-  Mailer den Link (Dev).
+  kurzlebig. Standardmäßig (`MAGIC_LINK_REQUIRE_SAME_BROWSER=false`) meldet der
+  Link **überall** an, wo man ihn öffnet — der homelab-freundliche Default,
+  weil mobile Mail-Apps den Link in einem eigenen In-App-Browser (andere
+  Cookie-Jar) öffnen und die Bindung sonst zur Login-Sackgasse würde.
+  Optionale **Browser-Bindung** (Schalter `=true`, für geteilte/Mehrbenutzer-
+  Instanzen, Claude.ai-Prinzip): `/auth/magic-link` setzt ein stabiles
+  `login_request`-Cookie (nur dessen Hash landet am Token); öffnet man den Link
+  im selben Browser → Session, woanders → `{status:"code", code}`, und der
+  ursprüngliche Browser schließt über `/auth/verify-code` ab (der Code steht nie
+  in der Mail, nur auf der Verify-Seite; nutzlos ohne das Cookie, 5 Fehlversuche
+  pro Token, IP-Rate-Limit, HMAC-abgeleitet — nie gespeichert). Die Login-Seite
+  pollt `/auth/login-status`. Kein User-Enumeration (immer 202, Redis-Rate-Limits
+  pro E-Mail/IP). Mail via SMTP; ohne `SMTP_HOST` loggt der Mailer den Link (Dev).
 - **OIDC / Authelia** (`/auth/oidc/login` → Authelia → `/auth/oidc/callback`):
   Authorization-Code-Flow mit vertraulichem Client (`services/oidc_service`),
   State-Cookie gegen CSRF, Userinfo über TLS. `upsert_oidc_user` verknüpft
