@@ -30,7 +30,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-expense}
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - ./db-data:/var/lib/postgresql/data
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-expense} -d ${POSTGRES_DB:-expense}"]
@@ -71,7 +71,7 @@ services:
     <<: [*backend-image, *hardened]
     env_file: .env
     volumes:
-      - media:/data/media
+      - ./media:/data/media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -86,7 +86,6 @@ services:
       - "traefik.http.routers.expense-api.rule=Host(`${APP_HOST:?set APP_HOST}`) && (PathPrefix(`/api/`) || PathPrefix(`/media`))"
       - "traefik.http.routers.expense-api.entrypoints=websecure"
       - "traefik.http.routers.expense-api.tls=true"
-      # - "traefik.http.routers.expense-api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.expense-api.service=expense-api"
       - "traefik.http.services.expense-api.loadbalancer.server.port=8000"
       - "traefik.http.routers.expense-api.middlewares=default@file"
@@ -99,7 +98,7 @@ services:
     command: arq app.workers.settings.WorkerSettings
     env_file: .env
     volumes:
-      - media:/data/media
+      - ./media:/data/media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -167,7 +166,7 @@ services:
       NTFY_URL: ${NTFY_URL:-}
       # Directory (mounted below) holding THIS compose file + .env; deploy.sh runs
       # `docker compose` there, targeting only the app's services.
-      COMPOSE_DIR: /srv/expense
+      COMPOSE_DIR: /opt/containers/expense-diary
     volumes:
       - ${APP_DEPLOY_DIR:?set APP_DEPLOY_DIR in .env}:/srv/expense
     networks: [internal, proxy]
@@ -191,6 +190,6 @@ networks:
     external: true  # the homelab's existing Traefik network
 
 volumes:
-  db-data:
+  #db-data:
   redis-data:
-  media:
+    #media:
