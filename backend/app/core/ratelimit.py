@@ -15,7 +15,10 @@ class RateLimiter:
         try:
             full_key = f"rl:{key}"
             count = await self._redis.incr(full_key)
-            if count == 1:
+            # Always ensure the key has a TTL. If a transient failure once left a
+            # key without expiry, it would otherwise count up forever and block
+            # the action permanently — so (re)arm the window whenever it's missing.
+            if count == 1 or await self._redis.ttl(full_key) < 0:
                 await self._redis.expire(full_key, window_seconds)
             return int(count) <= limit
         except Exception:

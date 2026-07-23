@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     magic_link_ttl_minutes: int = 15
     magic_link_replay_grace_seconds: int = 120  # bound browser re-loading its own link
     magic_link_code_attempts: int = 5  # wrong pairing codes per token before it burns
+    # Browser-binding: a link only logs in the browser that requested it, else a
+    # pairing code. Great for shared/public instances, but on mobile the mail app
+    # often opens the link in a separate in-app browser (different cookie jar),
+    # forcing the code dance. Set false for a simpler click-to-login on a trusted
+    # homelab: opening the (single-use, short-lived) link anywhere logs you in.
+    magic_link_require_same_browser: bool = True
     invitation_ttl_days: int = 14
     cookie_secure: bool = True  # set false for plain-HTTP local dev
 

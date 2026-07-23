@@ -75,6 +75,31 @@ async def test_link_opened_in_other_browser_needs_pairing_code(
     assert done.json()["access_token"]
 
 
+async def test_relaxed_binding_logs_in_any_browser(
+    anon_client: httpx.AsyncClient,
+    second_client: httpx.AsyncClient,
+    mailer: CapturingMailer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With browser-binding relaxed, the emailed link logs in wherever it's
+    # opened (no pairing code) — the homelab-friendly setting.
+    from app.core.config import get_settings
+    from app.services import magic_link_service
+
+    relaxed = get_settings().model_copy(update={"magic_link_require_same_browser": False})
+    monkeypatch.setattr(magic_link_service, "get_settings", lambda: relaxed)
+
+    await _create_active_user("relax@example.org")
+    await anon_client.post("/api/v1/auth/magic-link", json={"email": "relax@example.org"})
+    token = mailer.last_token()
+
+    # second_client has no login_request cookie, yet gets a session directly
+    resp = await second_client.post("/api/v1/auth/verify", json={"token": token})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "session"
+    assert resp.json()["access_token"]
+
+
 async def test_wrong_pairing_code_rejected(
     anon_client: httpx.AsyncClient, mailer: CapturingMailer
 ) -> None:

@@ -14,11 +14,14 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.core.ratelimit import RateLimiter
 from app.core.security import generate_token, hash_token, login_code_for, matches_login_code
 from app.integrations.mail.sender import Email, send_mail
 from app.models import MagicLinkToken, User
 from app.services import auth_service
+
+log = get_logger(__name__)
 
 
 def _now() -> datetime:
@@ -51,10 +54,14 @@ async def request_login_link(
     email_ok = await limiter.hit(f"ml:email:{email.lower()}", settings.magic_link_per_email, 900)
     ip_ok = await limiter.hit(f"ml:ip:{ip or 'none'}", settings.magic_link_per_ip, 3600)
     if not (email_ok and ip_ok):
+        # Logged (not surfaced) so a rate-limited address is diagnosable without
+        # leaking to the caller — a frequent cause of "no mail arrives".
+        log.warning("magic-link rate-limited", email=email, ip=ip, email_ok=email_ok, ip_ok=ip_ok)
         return
 
     user = await auth_service.get_user_by_email(session, email)
     if user is None or user.status != "active":
+        log.info("magic-link: no active user for address", email=email)
         return
 
     raw = generate_token()
@@ -69,17 +76,26 @@ async def request_login_link(
         )
     )
     await session.commit()
+
     link = f"{settings.base_url}/login?token={raw}"
-    await send_mail(
-        Email(
-            to=user.email,
-            subject="Dein Anmeldelink fürs Haushaltsbuch",
-            text=f"Hallo {user.display_name},\n\nmit diesem Link meldest du dich an:\n{link}\n\n"
-            f"Der Link ist {settings.magic_link_ttl_minutes} Minuten gültig und funktioniert "
-            f"nur in dem Browser, in dem du ihn angefordert hast. Öffnest du ihn woanders, "
-            f"zeigt die Seite einen kurzen Code, den du im ursprünglichen Browser eingibst.",
-        )
+    binding_hint = (
+        " Er funktioniert nur in dem Browser, in dem du ihn angefordert hast; öffnest "
+        "du ihn woanders, zeigt die Seite einen kurzen Code."
+        if settings.magic_link_require_same_browser
+        else ""
     )
+    try:
+        await send_mail(
+            Email(
+                to=user.email,
+                subject="Dein Anmeldelink fürs Haushaltsbuch",
+                text=f"Hallo {user.display_name},\n\nmit diesem Link meldest du dich an:\n{link}"
+                f"\n\nDer Link ist {settings.magic_link_ttl_minutes} Minuten gültig.{binding_hint}",
+            )
+        )
+        log.info("magic-link mail sent", email=user.email)
+    except Exception as exc:
+        log.error("magic-link mail send FAILED", email=user.email, error=str(exc))
 
 
 async def _consume(session: AsyncSession, raw: str) -> MagicLinkToken | None:
@@ -116,6 +132,10 @@ async def verify(
     bound_here = requester_secret is not None and hmac.compare_digest(
         hash_token(requester_secret), token.requester_hash
     )
+    # When same-browser binding is relaxed (trusted homelab), a valid single-use
+    # link logs in wherever it's opened — no pairing-code dance.
+    if not bound_here and not settings.magic_link_require_same_browser:
+        bound_here = True
     if not bound_here:
         if token.used_at is not None:
             raise VerificationError("Der Link wurde bereits verwendet.")
