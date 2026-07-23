@@ -4,7 +4,7 @@ sample that motivated the feature (a text PDF, not a scan)."""
 from datetime import datetime
 from decimal import Decimal
 
-from app.domain.extraction import parse_receipt_text, reconcile_confidence
+from app.domain.extraction import guess_category, parse_receipt_text, reconcile_confidence
 
 # Verbatim text as extracted from a real REWE eBon PDF (pypdf), spacing and all.
 REWE = """\
@@ -87,6 +87,20 @@ def test_parses_rewe_ebon_and_reconciles() -> None:
 
     # Payment/footer lines below SUMME are not mistaken for items.
     assert all("EC-Cash" not in i.name for i in receipt.items)
+
+
+def test_guess_category_for_common_german_items() -> None:
+    assert guess_category("GOUDA SCHEIBEN") == "Käse"
+    assert guess_category("BIO KOER FRISCHK") == "Käse"
+    assert guess_category("KAROTTE BIO") == "Gemüse"
+    assert guess_category("CHAMPIGNONS") == "Gemüse"
+    assert guess_category("MANGO") == "Obst"
+    assert guess_category("KULTURHEIDELB.") == "Obst"
+    assert guess_category("NATURALS ROSMARI") == "Gemüse"
+    assert guess_category("BIO KICH.ERB.CHI") == "Grundnahrungsmittel"
+    # Unknown / non-product → no guess (better none than wrong).
+    assert guess_category("LEERGUT EINWEG") is None
+    assert guess_category("XYZ VOELLIG UNBEKANNT") is None
 
 
 def test_unknown_text_yields_no_items() -> None:

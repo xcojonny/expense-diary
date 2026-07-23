@@ -260,6 +260,69 @@ def parse_receipt_text(text: str) -> ParsedReceipt:
     return receipt
 
 
+# Keyword → seeded category name (first match wins, ordered specific→general).
+# Names must exist in the seed tree so the service can map them to an id. This
+# is a best-effort guess for German grocery items so text-parsed eBons arrive
+# pre-categorized; the user can always re-file. No match → no category (better
+# none than wrong).
+_CATEGORY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("Käse", ("KAESE", "KÄSE", "GOUDA", "FRISCHK", "CAMEMBERT", "MOZZAREL", "EDAMER",
+              "GERAMONT", "PARMESAN", "FETA", "BUTTERKAESE")),
+    ("Joghurt & Quark", ("JOGHURT", "JOGURT", "QUARK", "SKYR")),
+    ("Milchprodukte & Eier", ("MILCH", "SAHNE", "BUTTER", "EIER", "MASCARPONE",
+                              "H-MILCH", "HMILCH", "MARGARINE")),
+    ("Obst", ("APFEL", "BANANE", "MANGO", "HEIDELB", "BEERE", "BIRNE", "TRAUBE",
+              "ORANGE", "ZITRONE", "KIWI", "PFIRSICH", "ERDBEER", "MELONE", "AVOCADO",
+              "ANANAS", "MANDARIN", "NEKTARINE", "PFLAUME")),
+    ("Gemüse", ("KAROTTE", "MOEHRE", "MÖHRE", "TOMATE", "PAPRIKA", "FENCHEL",
+                "CHAMPIGNON", "PILZ", "GURKE", "ZWIEBEL", "KARTOFFEL", "SALAT",
+                "BROKKOLI", "ZUCCHINI", "LAUCH", "KOHL", "SELLERIE", "SPINAT",
+                "ROSMARI", "BASILIK", "PETERSIL", "KRAEUTER", "KRÄUTER", "INGWER",
+                "KNOBLAUCH", "AUBERGINE", "RADIESCHEN", "SPARGEL")),
+    ("Fleisch & Wurst", ("HACK", "WURST", "SCHINKEN", "SALAMI", "HAEHNCHEN",
+                         "HÄHNCHEN", "PUTE", "RIND", "SCHWEIN", "SPECK", "BRATWURST",
+                         "FLEISCH", "GEFLUEGEL", "GEFLÜGEL", "METT", "SCHNITZEL")),
+    ("Fisch", ("LACHS", "THUNFISCH", "GARNELE", "FORELLE", "HERING", "FISCH",
+               "MAKRELE", "SCAMPI")),
+    ("Brot & Backwaren", ("BROT", "BROETCHEN", "BRÖTCHEN", "BAGUETTE", "TOAST",
+                          "CROISSANT", "GEBAECK", "GEBÄCK", "SEMMEL", "ZWIEBACK",
+                          "BREZEL")),
+    ("Kaffee, Tee & Kakao", ("KAFFEE", "ESPRESSO", "KAKAO", "TEE", "CAPPUCCINO")),
+    ("Getränke (alkoholfrei)", ("WASSER", "COLA", "SAFT", "LIMO", "SCHORLE", "EISTEE",
+                                "MINERALW", "SPRUDEL", "BRAUSE", "SPEZI")),
+    ("Alkohol", ("BIER", "WEIN", "SEKT", "PROSECCO", "VODKA", "WHISKY", "LIKOER",
+                 "LIKÖR", "APEROL", " GIN ", " RUM ")),
+    ("Süßwaren & Snacks", ("SCHOKO", "CHIPS", "KEKS", "GUMMI", "BONBON", "RIEGEL",
+                           "SNACK", "POPCORN", "CRACKER", "PRALINE", "NUSS", "NUESSE",
+                           "NÜSSE", "CHOCO", "WAFFEL")),
+    ("Grundnahrungsmittel", ("MEHL", "ZUCKER", "REIS", "NUDEL", "PASTA", "HAFERFL",
+                             "LINSEN", "BOHNEN", "KICH", "MUESLI", "MÜSLI", "HAFER",
+                             "GRIESS", "GRIEß", "COUSCOUS", "POLENTA")),
+    ("Öle, Gewürze & Kochzutaten", ("OLIVEN", "ESSIG", " SALZ", "PFEFFER", "GEWUERZ",
+                                    "GEWÜRZ", "SENF", "KETCHUP", "SOSSE", "SAUCE",
+                                    "BRUEHE", "BRÜHE", "OEL ", "ÖL ")),
+    ("Fertiggerichte", ("PIZZA", "FERTIG", "TIEFKUEHL", "LASAGNE", "MAULTASCHEN")),
+    ("Haushalt & Reinigung", ("SPUELI", "SPÜLI", "WASCH", "REINIG", "PUTZ",
+                              "MUELLBEUTEL", "KLOPAPIER", "TOILETTENP", "ALUFOLIE",
+                              "FROSCH", "KUECHENROLLE")),
+    ("Drogerie & Körperpflege", ("SHAMPOO", "DUSCH", "ZAHNP", "SEIFE", " DEO", "CREME",
+                                 "RASIER", "TAMPON", "BINDEN", "WATTE", "LOTION")),
+    ("Tierbedarf", ("HUNDE", "KATZEN", "TIERF", "KATZENFUTTER", "HUNDEFUTTER")),
+    ("Baby & Kind", ("WINDEL", " BABY", "BREI")),
+]
+
+
+def guess_category(name: str) -> str | None:
+    """Best-effort keyword → seeded-category name for a German grocery item.
+    Used as a fallback so text-parsed eBons (which carry no category) arrive
+    pre-categorized. Returns None when nothing matches."""
+    haystack = f" {name.upper()} "
+    for category, keywords in _CATEGORY_KEYWORDS:
+        if any(keyword in haystack for keyword in keywords):
+            return category
+    return None
+
+
 def reconcile_confidence(receipt: ParsedReceipt) -> tuple[str, bool]:
     """Return (confidence, needs_review) after a plausibility check.
 

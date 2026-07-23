@@ -10,6 +10,7 @@ from app.domain.extraction import (
     ExtractionError,
     ParsedLineItem,
     ParsedReceipt,
+    guess_category,
     parse_receipt_json,
     parse_receipt_text,
     reconcile_confidence,
@@ -125,6 +126,13 @@ async def _add_line_item(
     item_cache: dict[str, Item],
 ) -> None:
     category_id = categories.get(parsed.category) if parsed.category else None
+    # Fallback for line items that arrived without a category (notably the
+    # LLM-free text path): guess one from the product name so the receipt isn't
+    # entirely uncategorized. Only for products, and never overriding a given one.
+    if category_id is None and parsed.line_type == "product":
+        guessed = guess_category(parsed.name)
+        if guessed is not None:
+            category_id = categories.get(guessed)
     line = LineItem(
         receipt_id=receipt.id,
         name=parsed.name,
