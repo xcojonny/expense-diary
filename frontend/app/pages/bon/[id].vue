@@ -57,6 +57,14 @@ const rows = ref<EditRow[]>((data.value?.receipt.line_items ?? []).map(toRow))
 const storeName = ref(data.value?.receipt.store_name ?? '')
 const purchasedAt = ref(data.value?.receipt.purchased_at?.slice(0, 10) ?? '')
 
+// Re-sync the editable state from freshly fetched data (after a re-extraction,
+// the whole line-item set changes).
+function resyncFromData() {
+  rows.value = (data.value?.receipt.line_items ?? []).map(toRow)
+  storeName.value = data.value?.receipt.store_name ?? ''
+  purchasedAt.value = data.value?.receipt.purchased_at?.slice(0, 10) ?? ''
+}
+
 // Category dropdown grouped by parent (top-level + its children).
 const catGroups = computed(() => {
   const cats = data.value?.categories ?? []
@@ -209,6 +217,30 @@ async function confirmReview() {
   }
 }
 
+const reprocessing = ref(false)
+const TERMINAL: ReceiptStatus[] = ['done', 'needs_review', 'failed']
+
+async function reprocess() {
+  reprocessing.value = true
+  flash('success', 'Neu-Verarbeitung gestartet …')
+  try {
+    await api(`/receipts/${id}/reprocess`, { method: 'POST' })
+    // Poll until extraction reaches a terminal status (runs async in the worker).
+    for (let i = 0; i < 30; i++) {
+      const r = await api<ReceiptDetail>(`/receipts/${id}`)
+      if (TERMINAL.includes(r.status)) break
+      await new Promise(res => setTimeout(res, 1500))
+    }
+    await refresh()
+    resyncFromData()
+    flash('success', 'Bon neu verarbeitet.')
+  } catch {
+    flash('error', 'Neu-Verarbeitung fehlgeschlagen.')
+  } finally {
+    reprocessing.value = false
+  }
+}
+
 async function removeReceipt() {
   if (!confirm('Diesen Bon inklusive aller Positionen löschen?')) return
   await api(`/receipts/${id}`, { method: 'DELETE' })
@@ -295,6 +327,14 @@ async function removeReceipt() {
           @click="confirmReview"
         >
           Als geprüft markieren
+        </button>
+        <button
+          class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:text-green-700 disabled:opacity-50"
+          :disabled="reprocessing"
+          title="Datei erneut auslesen (Positionen + Kategorien neu erkennen)"
+          @click="reprocess"
+        >
+          {{ reprocessing ? 'Verarbeite …' : 'Neu verarbeiten' }}
         </button>
       </div>
     </div>

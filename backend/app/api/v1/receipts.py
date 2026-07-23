@@ -9,7 +9,7 @@ from app.api.deps import get_arq, get_current_group_id
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.domain.upload import detect_media_type
-from app.models import LineItem, Receipt
+from app.models import LineItem, Receipt, ReceiptStatus
 from app.schemas.receipt import (
     LineItemOut,
     LineItemWrite,
@@ -129,6 +129,26 @@ async def update_receipt(
 ) -> Receipt:
     receipt = await _get_owned_receipt(db, receipt_id, group_id)
     return await receipt_edit_service.update_receipt(db, receipt, data)
+
+
+@router.post("/{receipt_id}/reprocess", response_model=ReceiptOut)
+async def reprocess_receipt(
+    receipt_id: uuid.UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    group_id: uuid.UUID = Depends(get_current_group_id),
+) -> Receipt:
+    """Re-run extraction on the already-stored file — e.g. after parser/category
+    improvements. Idempotent: extraction replaces the receipt's line items, so
+    this recomputes items, categories and status from scratch."""
+    receipt = await _get_owned_receipt(db, receipt_id, group_id)
+    receipt.status = ReceiptStatus.uploaded
+    receipt.error = None
+    await db.commit()
+    await _schedule_extraction(request, background_tasks, receipt.id)
+    await db.refresh(receipt)
+    return receipt
 
 
 @router.delete("/{receipt_id}", status_code=204)
