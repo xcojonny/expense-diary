@@ -129,3 +129,30 @@ prod-logs: ## Tail logs of the local production stack
 .PHONY: prod-down
 prod-down: ## Stop the local production stack (add v=1 to also drop volumes)
 	docker compose $(PROD) down $(if $(v),--volumes,)
+
+# -- Registry (GHCR) -----------------------------------------------------------
+# Manual build + push to GHCR. CI (release.yml) does this automatically on a
+# green push to main / v* tags — use these for a one-off manual publish.
+
+GHCR_OWNER ?=
+IMAGE_TAG  ?= latest
+GIT_SHA    := $(shell git rev-parse HEAD 2>/dev/null)
+IMAGE_BASE  = ghcr.io/$(GHCR_OWNER)/expense-diary
+
+.PHONY: registry-login
+registry-login: ## Log in to GHCR (needs GHCR_USER + GHCR_TOKEN, PAT with write:packages)
+	@[ -n "$(GHCR_TOKEN)" ] || { echo "→ set GHCR_USER=<user> GHCR_TOKEN=<PAT write:packages>"; exit 1; }
+	@echo "$(GHCR_TOKEN)" | docker login ghcr.io -u "$(GHCR_USER)" --password-stdin
+
+.PHONY: push
+push: ## Build + push images to GHCR: make push GHCR_OWNER=<user> [IMAGE_TAG=latest] (docker login first)
+	@[ -n "$(GHCR_OWNER)" ] || { echo "→ set GHCR_OWNER=<github-user-or-org>"; exit 1; }
+	docker build --build-arg GIT_SHA=$(GIT_SHA) \
+		-t $(IMAGE_BASE)-backend:$(IMAGE_TAG) -t $(IMAGE_BASE)-backend:sha-$(GIT_SHA) ./backend
+	docker build --build-arg GIT_SHA=$(GIT_SHA) \
+		-t $(IMAGE_BASE)-frontend:$(IMAGE_TAG) -t $(IMAGE_BASE)-frontend:sha-$(GIT_SHA) ./frontend
+	docker push $(IMAGE_BASE)-backend:$(IMAGE_TAG)
+	docker push $(IMAGE_BASE)-backend:sha-$(GIT_SHA)
+	docker push $(IMAGE_BASE)-frontend:$(IMAGE_TAG)
+	docker push $(IMAGE_BASE)-frontend:sha-$(GIT_SHA)
+	@echo "→ pushed $(IMAGE_BASE)-{backend,frontend}:{$(IMAGE_TAG),sha-$(GIT_SHA)}"

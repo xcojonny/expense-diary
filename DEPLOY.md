@@ -40,6 +40,13 @@ YAML anchors).
 `ghcr.io/<owner>/expense-diary-{backend,frontend}` tagged `latest`,
 `sha-<commit>`, `semver`. The commit SHA is baked in (`GIT_SHA`, at `/api/v1/version`).
 
+Manual one-off publish (CI normally handles this):
+
+```bash
+make registry-login GHCR_USER=<user> GHCR_TOKEN=<PAT write:packages>
+make push GHCR_OWNER=<user> [IMAGE_TAG=latest]   # builds + pushes both images (latest + sha-<commit>)
+```
+
 ## Pull-deploy webhook (like cooking-jonelli)
 
 1. On a green CI run on `main`, the release **deploy** job POSTs an
