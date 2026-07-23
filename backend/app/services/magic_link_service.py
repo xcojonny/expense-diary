@@ -127,16 +127,31 @@ async def verify(
         )
     ).scalar_one_or_none()
     if token is None or token.expires_at < _now() or token.requester_hash is None:
+        # Logged (not surfaced) so "the link just bounces me back to login" is
+        # diagnosable: distinguishes an unknown/expired token from a binding miss.
+        log.info(
+            "magic-link verify: invalid or expired token",
+            found=token is not None,
+            expired=(token is not None and token.expires_at < _now()),
+        )
         raise VerificationError("Der Link ist ungültig oder abgelaufen.")
 
-    bound_here = requester_secret is not None and hmac.compare_digest(
+    cookie_matches = requester_secret is not None and hmac.compare_digest(
         hash_token(requester_secret), token.requester_hash
     )
     # When same-browser binding is relaxed (trusted homelab), a valid single-use
     # link logs in wherever it's opened — no pairing-code dance.
-    if not bound_here and not settings.magic_link_require_same_browser:
-        bound_here = True
+    relaxed = not cookie_matches and not settings.magic_link_require_same_browser
+    bound_here = cookie_matches or relaxed
     if not bound_here:
+        # Opened in a different browser/cookie-jar with binding on → pairing code.
+        # The #1 real-world cause of the "login loop": mobile mail apps open the
+        # link in a separate in-app browser without the login_request cookie.
+        log.info(
+            "magic-link verify: pairing code (link opened in another browser)",
+            email=token.email,
+            had_cookie=requester_secret is not None,
+        )
         if token.used_at is not None:
             raise VerificationError("Der Link wurde bereits verwendet.")
         token.opened_at = token.opened_at or _now()  # requesting browser's poll flips to "code"
@@ -148,11 +163,19 @@ async def verify(
         # open) within the grace window is the same user, not an attack.
         grace = timedelta(seconds=settings.magic_link_replay_grace_seconds)
         if not (token.used_at is not None and token.used_at > _now() - grace):
+            log.info("magic-link verify: token already used (outside grace)", email=token.email)
             raise VerificationError("Der Link ist ungültig oder abgelaufen.")
 
     user = await auth_service.get_user_by_email(session, token.email)
     if user is None or user.status != "active":
+        log.info("magic-link verify: no active user for token", email=token.email)
         raise VerificationError("Der Link ist ungültig oder abgelaufen.")
+    log.info(
+        "magic-link verify: session issued",
+        email=token.email,
+        cookie_matched=cookie_matches,
+        relaxed_binding=relaxed,
+    )
     if user.email_verified_at is None:
         user.email_verified_at = _now()
     await session.commit()
