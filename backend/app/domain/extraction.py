@@ -5,6 +5,7 @@ is unit-testable without a model or a database. The service layer only wires
 this to storage, the LLM adapter, and the DB.
 """
 
+import contextlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -142,9 +143,15 @@ def parse_receipt_json(raw: str) -> ParsedReceipt:
 # layouts yield few/no items and get routed to needs_review by the sum check.
 
 _TEXT_AMOUNT = r"-?\d{1,3}(?:\.\d{3})*,\d{2}"
-# An item line: "NAME <gap> 1,99 B" (optional VAT letter, optional trailing "*").
+# A simple item line: "NAME <gap> 1,99 B" (optional VAT letter, optional "*").
 _ITEM_LINE = re.compile(
     rf"^(?P<name>.+?)\s{{2,}}(?P<amount>{_TEXT_AMOUNT})\s*(?P<vat>[A-Za-z])?\s*\*?\s*$"
+)
+# Item with the quantity inline (Lidl): "NAME <gap> 0,29 x 6 1,74 B"
+# = unit price x count -> line total.
+_ITEM_INLINE_QTY = re.compile(
+    rf"^(?P<name>.+?)\s{{2,}}(?P<up>\d+,\d{{2}})\s*[x\u00d7]\s*(?P<qty>\d+(?:,\d+)?)\s+"
+    rf"(?P<amount>{_TEXT_AMOUNT})\s*(?P<vat>[A-Za-z])?\s*\*?\s*$"
 )
 # A quantity detail line under the item: "2 Stk x 1,45" or "0,512 kg x 5,99 EUR/kg".
 _QTY_COUNT = re.compile(
@@ -155,8 +162,27 @@ _QTY_WEIGHT = re.compile(
     r"^(?P<qty>\d+(?:,\d+)?)\s*(?P<unit>kg|g|l|ml)\s*[x\u00d7]\s*(?P<price>\d+(?:,\d+)?)",
     re.IGNORECASE,
 )
-_SUMME = re.compile(rf"^SUMME\b.*?(?P<amount>{_TEXT_AMOUNT})\s*$", re.IGNORECASE)
-_DEPOSIT_KEYWORDS = ("PFAND", "LEERG")  # LEERG. / LEERGUT → deposit line
+# Total line — chains differ (REWE "SUMME", Lidl "zu zahlen"). Take the FIRST
+# match so the VAT breakdown printed below it (which also says "Summe") stays
+# out of the item region.
+_TOTAL = re.compile(
+    rf"^(?:zu\s+zahlen|summe|gesamtbetrag|gesamtsumme|gesamt)\b.*?(?P<amount>{_TEXT_AMOUNT})\s*$",
+    re.IGNORECASE,
+)
+_DEPOSIT_KEYWORDS = ("PFAND", "LEERG")  # LEERG. / LEERGUT / Pfand → deposit line
+# Chains recognised by a distinctive text marker (the logo is an image, so the
+# name often only appears in fine print like "Lidl Plus" / "www.lidl.de").
+# Markers are specific enough not to hit the VAT "Netto" column.
+_KNOWN_STORES: list[tuple[str, tuple[str, ...]]] = [
+    ("Lidl", ("LIDL PLUS", "WWW.LIDL", "LIDL.DE")),
+    ("REWE", ("REWE MARKT", "WWW.REWE", "REWE.DE")),
+    ("Kaufland", ("KAUFLAND",)),
+    ("ALDI", ("ALDI SÜD", "ALDI NORD", "WWW.ALDI")),
+    ("EDEKA", ("EDEKA ", "WWW.EDEKA")),
+    ("PENNY", ("PENNY MARKT", "WWW.PENNY", "PENNY.DE")),
+    ("Netto", ("NETTO MARKEN", "NETTO-ONLINE", "NETTO.DE")),
+    ("Rossmann", ("ROSSMANN",)),
+]
 
 
 def _de_amount(text: str) -> Decimal | None:
@@ -173,6 +199,46 @@ def _spaced_letters(line: str) -> bool:
     return len(tokens) >= 2 and all(len(token) == 1 for token in tokens)
 
 
+def _make_item(name: str, amount: Decimal, vat: str | None) -> ParsedLineItem:
+    """Build a line item, classifying it by keyword/sign (Pfand → deposit,
+    negative → discount, else product)."""
+    upper = name.upper()
+    if any(keyword in upper for keyword in _DEPOSIT_KEYWORDS):
+        line_type = "deposit"
+    elif amount < 0:
+        line_type = "discount"
+    else:
+        line_type = "product"
+    return ParsedLineItem(
+        name=name, total_price=amount, vat_class=vat.upper() if vat else None, line_type=line_type
+    )
+
+
+def _parse_datetime(receipt: ParsedReceipt, text: str) -> None:
+    """Fill purchased_at from a German dd.mm.yyyy (+ optional time), else from an
+    ISO yyyy-mm-dd date (some eBons only carry the ISO timestamp)."""
+    date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})", text)
+    if date_match is not None:
+        try:
+            when = datetime.strptime(date_match.group(1), "%d.%m.%Y")
+        except ValueError:
+            return
+        time_match = re.search(r"(\d{2}:\d{2}(?::\d{2})?)", text)
+        if time_match is not None:
+            parts = [int(p) for p in time_match.group(1).split(":")]
+            when = when.replace(
+                hour=parts[0], minute=parts[1], second=parts[2] if len(parts) > 2 else 0
+            )
+        receipt.purchased_at = when
+        return
+    iso = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if iso is not None:
+        with contextlib.suppress(ValueError):
+            receipt.purchased_at = datetime(
+                int(iso.group(1)), int(iso.group(2)), int(iso.group(3))
+            )
+
+
 def parse_receipt_text(text: str) -> ParsedReceipt:
     """Parse a German digital-receipt (eBon) *text* dump into a ParsedReceipt.
 
@@ -184,21 +250,28 @@ def parse_receipt_text(text: str) -> ParsedReceipt:
     lines = [line.rstrip() for line in text.splitlines()]
     receipt = ParsedReceipt()
 
-    # Store name: first meaningful header line (REWE prints it spaced: "R E W E").
-    for line in lines[:8]:
-        stripped = line.strip()
-        if len(stripped) >= 2 and any(c.isalpha() for c in stripped) and "EUR" not in stripped:
-            receipt.store_name = (
-                "".join(stripped.split())
-                if _spaced_letters(stripped)
-                else re.sub(r"\s{2,}", " ", stripped)
-            )
+    # Store name: a known chain by its text marker, else the first meaningful
+    # header line (REWE prints it letter-spaced: "R E W E").
+    upper_text = text.upper()
+    for canonical, markers in _KNOWN_STORES:
+        if any(marker in upper_text for marker in markers):
+            receipt.store_name = canonical
             break
+    if receipt.store_name is None:
+        for line in lines[:8]:
+            stripped = line.strip()
+            if len(stripped) >= 2 and any(c.isalpha() for c in stripped) and "EUR" not in stripped:
+                receipt.store_name = (
+                    "".join(stripped.split())
+                    if _spaced_letters(stripped)
+                    else re.sub(r"\s{2,}", " ", stripped)
+                )
+                break
 
     # Total + the cutoff below which we stop treating lines as items.
     total_idx: int | None = None
     for i, line in enumerate(lines):
-        match = _SUMME.match(line.strip())
+        match = _TOTAL.match(line.strip())
         if match:
             receipt.total = _de_amount(match.group("amount"))
             total_idx = i
@@ -216,6 +289,16 @@ def parse_receipt_text(text: str) -> ParsedReceipt:
                 current.unit = qty.group("unit")
                 current.unit_price = _de_amount(qty.group("price"))
             continue
+        inline = _ITEM_INLINE_QTY.match(stripped)
+        if inline is not None:  # item with inline "unit-price x count total"
+            name = inline.group("name").strip()
+            amount = _de_amount(inline.group("amount"))
+            if amount is not None and any(c.isalpha() for c in name):
+                current = _make_item(name, amount, inline.group("vat"))
+                current.quantity = _de_amount(inline.group("qty"))
+                current.unit_price = _de_amount(inline.group("up"))
+                receipt.items.append(current)
+            continue
         item = _ITEM_LINE.match(stripped)
         if item is None:
             continue
@@ -223,36 +306,10 @@ def parse_receipt_text(text: str) -> ParsedReceipt:
         amount = _de_amount(item.group("amount"))
         if amount is None or not any(c.isalpha() for c in name):
             continue  # header/address noise without a real product name
-        upper = name.upper()
-        if any(keyword in upper for keyword in _DEPOSIT_KEYWORDS):
-            line_type = "deposit"
-        elif amount < 0:
-            line_type = "discount"
-        else:
-            line_type = "product"
-        vat = item.group("vat")
-        current = ParsedLineItem(
-            name=name,
-            total_price=amount,
-            vat_class=vat.upper() if vat else None,
-            line_type=line_type,
-        )
+        current = _make_item(name, amount, item.group("vat"))
         receipt.items.append(current)
 
-    joined = "\n".join(lines)
-    date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})", joined)
-    time_match = re.search(r"(\d{2}:\d{2}(?::\d{2})?)", joined)
-    if date_match is not None:
-        try:
-            when = datetime.strptime(date_match.group(1), "%d.%m.%Y")
-            if time_match is not None:
-                parts = [int(p) for p in time_match.group(1).split(":")]
-                when = when.replace(
-                    hour=parts[0], minute=parts[1], second=parts[2] if len(parts) > 2 else 0
-                )
-            receipt.purchased_at = when
-        except ValueError:
-            pass
+    _parse_datetime(receipt, "\n".join(lines))
 
     # Only auto-complete when we have items *and* a total to reconcile against;
     # otherwise force manual review (confidence "low").

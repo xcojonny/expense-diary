@@ -89,6 +89,75 @@ def test_parses_rewe_ebon_and_reconciles() -> None:
     assert all("EC-Cash" not in i.name for i in receipt.items)
 
 
+# Lidl eBon: different layout — total is "zu zahlen", quantities are inline
+# ("0,29 x 6 1,74"), per-item "Lidl Plus Rabatt" discounts, VAT table below the
+# total. Transcribed to sum exactly to the payable total.
+LIDL = """\
+Abt-Hafner-Str. 14
+87629 Füssen
+                                   EUR
+Tomate Cherrys.                    8,83 A
+   1,108 kg x 7,97   EUR/kg
+   Lidl Plus Rabatt               -2,96
+Gurken Feld lo.                    0,83 A
+   0,334 kg x 2,49   EUR/kg
+   Lidl Plus Rabatt               -0,17
+Bio Paprika rot                    2,29 A
+   Lidl Plus Rabatt               -0,40
+Bioland Eier OKT 6er   3,19 x  2   6,38 A
+Mineralwasser          0,29 x  6   1,74 B
+Pfand 0,25 EM          0,25 x  6   1,50 B
+Cashew-Cranberry-MIx               1,99 A
+ --------------------------------------
+ zu zahlen                        20,03
+ Karte                            20,03
+
+ MWST%   MWST +   Netto = Brutto
+ A  7 %   1,00   10,00   11,00
+ B 19 %   1,00    8,00    9,03
+ Summe    2,00   18,00   20,03
+ Gesamter Preisvorteil  3,53 EUR gespart
+2026-07-21T15:34:49.000Z
+"""
+
+
+def test_parses_lidl_ebon() -> None:
+    receipt = parse_receipt_text(LIDL)
+
+    assert receipt.store_name == "Lidl"  # from "Lidl Plus" marker, not the address
+    assert receipt.total == Decimal("20.03")  # "zu zahlen", not the VAT-table "Summe"
+    assert receipt.purchased_at is not None
+    assert receipt.purchased_at.date().isoformat() == "2026-07-21"
+
+    names = [i.name for i in receipt.items]
+    # The VAT-breakdown rows below "zu zahlen" must NOT become items.
+    assert not any(n.startswith("A ") or n.startswith("B ") for n in names)
+
+    # Inline quantity: "0,29 x 6" → qty 6 at 0,29.
+    water = next(i for i in receipt.items if i.name == "Mineralwasser")
+    assert water.quantity == Decimal("6")
+    assert water.unit_price == Decimal("0.29")
+    assert water.total_price == Decimal("1.74")
+
+    # Weight sub-line attaches to the item above it.
+    tomato = next(i for i in receipt.items if i.name == "Tomate Cherrys.")
+    assert tomato.unit == "kg"
+    assert tomato.unit_price == Decimal("7.97")
+
+    # Deposit + discounts classified correctly.
+    assert next(i for i in receipt.items if "Pfand" in i.name).line_type == "deposit"
+    discounts = [i for i in receipt.items if i.name == "Lidl Plus Rabatt"]
+    assert len(discounts) == 3
+    assert all(d.line_type == "discount" and d.total_price < 0 for d in discounts)
+
+    # Line items reconcile to the payable total → recognized.
+    item_sum = sum((i.total_price for i in receipt.items), Decimal(0))
+    assert item_sum == Decimal("20.03")
+    confidence, needs_review = reconcile_confidence(receipt)
+    assert confidence == "high"
+    assert needs_review is False
+
+
 def test_guess_category_for_common_german_items() -> None:
     assert guess_category("GOUDA SCHEIBEN") == "Käse"
     assert guess_category("BIO KOER FRISCHK") == "Käse"
