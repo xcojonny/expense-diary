@@ -48,4 +48,12 @@ def get_vision_llm(settings: Settings | None = None) -> VisionLLM:
             provider=provider,
             reason=reason,
         )
+    else:
+        # The default. Not an error, but make it explicit in the log — otherwise
+        # "why does every photo land in needs_review?" has no visible answer.
+        # (Text-PDF eBons still work without a model; only photos/scans need one.)
+        log.info(
+            "llm adapter: none — no vision model configured; "
+            "photo/scan receipts go to needs_review (set LLM_PROVIDER=openai to enable)"
+        )
     return NullVisionLLM()
