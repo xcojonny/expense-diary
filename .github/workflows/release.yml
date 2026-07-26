@@ -1,0 +1,105 @@
+name: Release
+
+# Build + push the backend and frontend container images to GHCR. Runs after a
+# green CI on main, on a version tag (v*), or manually. docker-compose.yml
+# pulls ghcr.io/<owner>/expense-diary-{backend,frontend} — pull the new tag on
+# your host to deploy (no deploy mechanism is assumed here).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build & Push (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    # Only build on a successful CI push (not red/PR runs), a tag, or manual dispatch.
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+          || (github.event.workflow_run.event == 'push'
+              && github.event.workflow_run.conclusion == 'success') }}
+    strategy:
+      matrix:
+        service: [backend, frontend]
+    env:
+      # Build the exact commit CI verified (workflow_run) / the pushed ref otherwise.
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.service }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_run' }}
+            type=raw,value=sha-${{ env.RELEASE_SHA }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          # Bake the commit SHA into both images (backend: GIT_SHA env, surfaced
+          # at /api/v1/version; frontend: NUXT public gitSha).
+          build-args: |
+            GIT_SHA=${{ env.RELEASE_SHA }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+  deploy:
+    name: Deploy (HMAC webhook, pull-based)
+    runs-on: ubuntu-latest
+    needs: build
+    if: >-
+      ${{ always() && needs.build.result == 'success'
+          && ((github.event_name == 'workflow_run'
+               && github.event.workflow_run.event == 'push'
+               && github.event.workflow_run.conclusion == 'success')
+              || github.event_name == 'workflow_dispatch'
+              || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - name: Trigger deploy webhook (HMAC-signed, replay-protected)
+        env:
+          WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WEBHOOK_URL:-}" ] || [ -z "${WEBHOOK_SECRET:-}" ]; then
+            echo "No deploy webhook configured (DEPLOY_WEBHOOK_URL/SECRET) — skipping."
+            exit 0
+          fi
+          body=$(printf '{"sha":"%s","timestamp":%d}' "${RELEASE_SHA}" "$(date +%s)")
+          sig=$(printf '%s' "${body}" | openssl dgst -sha256 -hmac "${WEBHOOK_SECRET}" | sed 's/^.* /sha256=/')
+          # The webhook runs synchronously (compose pull && up -d --wait) and can
+          # take a while / return 500 on failure — allow a generous timeout.
+          code=$(curl -sS -o /tmp/resp.txt -w '%{http_code}' -m 300 \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: ${sig}" \
+            -d "${body}" "${WEBHOOK_URL}")
+          cat /tmp/resp.txt || true
+          echo "HTTP ${code}"
+          test "${code}" = "200"
