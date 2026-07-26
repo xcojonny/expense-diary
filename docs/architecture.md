@@ -143,7 +143,9 @@ Vertrag zu ändern.
 5. Jeder Fehler wird als `status=failed` mit `error` festgehalten (ein defekter
    Bon legt den Worker nicht lahm). `LLM_PROVIDER=none` (kein Modell) →
    `raw=None` → `needs_review` (manuelle Erfassung). Jeder LLM-Pfad degradiert
-   sauber auf den No-op-Fallback.
+   sauber auf den No-op-Fallback; ein *konfigurierter*, aber unbrauchbarer
+   Provider (unbekannter `LLM_PROVIDER`, leeres `LLM_MODEL`) wird dabei mit einer
+   `warning` geloggt statt still auf No-op zu fallen (siehe §3.2).
 
 Das Frontend (`pages/upload.vue` + `composables/useReceiptPolling`) pollt nach
 dem Upload `GET /api/v1/receipts/{id}` (~2 s), bis ein Endzustand erreicht ist.
@@ -156,6 +158,28 @@ Typänderungen laufen serverseitig durch dieselbe `services/items.apply_product_
 wie die Extraktion — eine korrigierte Position landet also am selben Item-Trend-Anker
 wie eine extrahierte, `normalized_name`/`item_id` werden nie vom Client gesetzt.
 „Als geprüft markieren" setzt `needs_review → done`.
+
+Zum Abgleich zeigt die Detailseite den **Original-Beleg** (Bild/PDF) direkt an.
+Sie lädt ihn über `GET /api/v1/receipts/{id}/file` — einen **gruppen-scopeden**,
+authentifizierten Endpoint (nicht den offenen `/media`-Mount), der die Datei aus
+`integrations/storage` streamt (Content-Type per Magic-Bytes). Da die Auth ein
+Bearer-Token im Header ist (kein Cookie), holt das Frontend die Bytes über den
+authentifizierten Client und rendert sie als `blob:`-URL.
+
+### 3.2 Beobachtbarkeit: Admin-Log-Ansicht (`core/logging`)
+
+Der Instanz-Admin liest die letzten Backend-Ereignisse unter `/api/v1/admin/logs`
+(Frontend `pages/admin.vue`), ohne in den Container zu müssen. Kritisch: Die
+gesamte Extraktions- + Vision-LLM-Pipeline läuft im **separaten ARQ-Worker**.
+Ein rein prozess-lokaler In-Memory-Ring würde dem API-Prozess diese Logs nie
+zeigen (die Ansicht wäre praktisch leer — nur „startup complete"). Deshalb
+schreibt ein structlog-Prozessor jedes Ereignis zusätzlich in einen
+**Redis-gestützten, gedeckelten Ring** (`LPUSH`/`LTRIM`), den alle Prozesse
+teilen und den die Admin-Ansicht liest. Best-effort: fällt Redis aus, degradiert
+es auf den lokalen In-Memory-Ring (dann läuft die Extraktion ohnehin in-process,
+d. h. deren Logs sind im API-Ring). Der LLM-Adapter loggt Request/Antwort/Fehler
+(inkl. Provider-Fehlertext), damit „die LLM-Anbindung geht nicht" diagnostizierbar
+ist statt still zu scheitern.
 
 ## 4. Analyse-Ebene (Phase 4, das Herzstück — implementiert)
 

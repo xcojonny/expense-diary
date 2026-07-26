@@ -39,11 +39,15 @@ async def run_extraction(receipt_id: uuid.UUID) -> None:
             log.warning("extraction: receipt gone", receipt_id=str(receipt_id))
             return
 
+        log.info("extraction: start", receipt_id=str(receipt_id))
         receipt.status = ReceiptStatus.processing
         await session.commit()
 
         try:
             await _extract(session, receipt)
+            log.info(
+                "extraction: done", receipt_id=str(receipt_id), status=str(receipt.status)
+            )
         except Exception as exc:
             await session.rollback()
             fresh = await session.get(Receipt, receipt_id)
@@ -57,6 +61,12 @@ async def run_extraction(receipt_id: uuid.UUID) -> None:
 async def _extract(session: AsyncSession, receipt: Receipt) -> None:
     image_bytes = get_storage().read(receipt.image_path)
     media_type = detect_media_type(image_bytes)
+    log.info(
+        "extraction: file read",
+        receipt_id=str(receipt.id),
+        media_type=media_type,
+        bytes=len(image_bytes),
+    )
 
     if media_type == "application/pdf":
         # Digital eBons (REWE & co.) are text PDFs — parse the text directly,
@@ -66,14 +76,23 @@ async def _extract(session: AsyncSession, receipt: Receipt) -> None:
         if text:
             parsed = parse_receipt_text(text)
             if parsed.items:
+                log.info(
+                    "extraction: parsed PDF text (no LLM)",
+                    receipt_id=str(receipt.id),
+                    items=len(parsed.items),
+                )
                 await _apply(session, receipt, parsed, text)
                 return
         extracted = first_page_image(image_bytes)
         if extracted is None:
             # No text and no rasterizable image → can't scan; hand to review.
+            log.info(
+                "extraction: PDF not parseable → needs_review", receipt_id=str(receipt.id)
+            )
             receipt.status = ReceiptStatus.needs_review
             await session.commit()
             return
+        log.info("extraction: PDF rasterized → vision LLM", receipt_id=str(receipt.id))
         image_bytes, media_type = extracted
 
     if media_type is None:
@@ -84,7 +103,10 @@ async def _extract(session: AsyncSession, receipt: Receipt) -> None:
         image_bytes=image_bytes, media_type=media_type, prompt=prompt
     )
     if raw is None:
-        # No model configured (LLM_PROVIDER=none) → manual entry.
+        # No model configured (LLM_PROVIDER=none / unusable) → manual entry.
+        log.info(
+            "extraction: no LLM result → needs_review", receipt_id=str(receipt.id)
+        )
         receipt.status = ReceiptStatus.needs_review
         await session.commit()
         return

@@ -74,7 +74,7 @@ onUnmounted(() => {
   <div class="space-y-4">
     <div class="flex flex-wrap items-center gap-3">
       <h1 class="text-xl font-semibold">Logs</h1>
-      <span class="text-sm text-gray-500">Backend-Prozess, seit letztem Neustart</span>
+      <span class="text-sm text-gray-500">Backend + Worker (inkl. LLM-Extraktion), seit letztem Neustart</span>
       <div class="ml-auto flex items-center gap-2">
         <select v-model="level" class="rounded border px-2 py-1 text-sm" @change="load">
           <option value="">Alle</option>
