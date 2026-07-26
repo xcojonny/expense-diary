@@ -95,7 +95,27 @@ def test_resolver_none_is_null() -> None:
     assert isinstance(get_vision_llm(settings), NullVisionLLM)
 
 
-def test_resolver_unknown_provider_falls_back_to_null() -> None:
-    # e.g. someone sets LLM_PROVIDER=openrouter — not one of the supported names.
+def test_resolver_openrouter_uses_openrouter_endpoint() -> None:
+    # LLM_PROVIDER=openrouter with the base URL left at the OpenAI default → the
+    # adapter targets the OpenRouter endpoint (the intuitive config just works).
     settings = Settings(llm_provider="openrouter", llm_model="openai/gpt-4o-mini")
+    adapter = get_vision_llm(settings)
+    assert isinstance(adapter, OpenAICompatibleVisionLLM)
+    assert adapter.base_url == "https://openrouter.ai/api/v1"
+
+
+def test_resolver_explicit_base_url_wins() -> None:
+    settings = Settings(
+        llm_provider="openrouter",
+        llm_model="openai/gpt-4o-mini",
+        llm_base_url="https://proxy.example/v1",
+    )
+    adapter = get_vision_llm(settings)
+    assert isinstance(adapter, OpenAICompatibleVisionLLM)
+    assert adapter.base_url == "https://proxy.example/v1"
+
+
+def test_resolver_unknown_provider_falls_back_to_null() -> None:
+    # A genuinely unsupported provider name still degrades to the no-op.
+    settings = Settings(llm_provider="gemini", llm_model="gemini-1.5")
     assert isinstance(get_vision_llm(settings), NullVisionLLM)

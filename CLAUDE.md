@@ -92,7 +92,7 @@ tests concentrate. Anything touching the DB, network, or Redis goes in
 `services/` or `integrations/`, never in `domain/`.
 
 `integrations/llm` hides the model behind an interface so `LLM_PROVIDER`
-(`openai` / `ollama` / `none`) switches providers with no service changes; every
+(`openai` / `openrouter` / `ollama` / `none`) switches providers with no service changes; every
 LLM path must degrade gracefully to the rule-based/no-op fallback.
 
 ## Frontend layout

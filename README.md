@@ -64,7 +64,7 @@ backend/app/
 ├── domain/         # ★ PURE, I/O-free logic — normalize.py (+ aggregation, phase 4)
 ├── services/       # use-cases: upload, extraction, analysis (phase 2+)
 ├── integrations/
-│   ├── llm/        #   vision-LLM adapter (openai / ollama / null fallback)
+│   ├── llm/        #   vision-LLM adapter (openai / openrouter / ollama / null fallback)
 │   └── storage/    #   local media storage
 ├── prompts/        # editable extraction prompt (receipt_extraction.de.txt)
 ├── workers/        # ARQ settings + tasks (phase 2)
@@ -112,9 +112,9 @@ Backend settings live in `backend/app/core/config.py`; template:
 | `MEDIA_DIR` | `./.data/media` (dev) / `/data/media` (Docker) | Uploaded receipt files |
 | `DEFAULT_LOCALE` | `de` | Default UI/mail language |
 | `UPLOAD_MAX_BYTES` | `15728640` | Max receipt file size (15 MiB) |
-| `LLM_PROVIDER` | `none` | `none` \| `openai` \| `ollama` — `none` = rule-based fallback (only used for photos/scans; text eBons need no LLM) |
+| `LLM_PROVIDER` | `none` | `none` \| `openai` \| `openrouter` \| `ollama` — `none` = rule-based fallback (only used for photos/scans; text eBons need no LLM) |
 | `LLM_API_KEY` | – | API key for the vision LLM |
-| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible or Ollama endpoint. OpenRouter: `https://openrouter.ai/api/v1` (`LLM_PROVIDER=openai`) |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible or Ollama endpoint. `openrouter` auto-uses `https://openrouter.ai/api/v1` unless overridden |
 | `LLM_MODEL` | `gpt-4o-mini` | Vision model name (OpenRouter namespaces it, e.g. `openai/gpt-4o-mini`) |
 | `LLM_TIMEOUT_SECONDS` | `90` | Per-request LLM timeout |
 | `SECRET_KEY` | `change-me` | JWT signing — set a strong value in prod |

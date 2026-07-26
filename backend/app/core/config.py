@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # -- LLM (vision extraction) — provider-agnostic adapter -------------------
     # "none" enables the rule-based/no-op fallback so the app runs without any
     # LLM configured (receipts land in needs_review instead of done).
-    llm_provider: str = "none"  # none | openai | ollama
+    llm_provider: str = "none"  # none | openai | openrouter | ollama
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"  # OpenAI-Vision-compatible or Ollama endpoint
     llm_model: str = "gpt-4o-mini"
