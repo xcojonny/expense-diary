@@ -110,6 +110,43 @@ onUnmounted(() => {
   if (noticeTimer) clearTimeout(noticeTimer)
 })
 
+// --- Original receipt file (image / PDF) ----------------------------------
+// Auth is a bearer token in a header, so we can't point <img src> straight at
+// the endpoint — fetch the bytes with the authenticated client and hand the
+// element a blob: URL instead.
+const fileUrl = ref<string | null>(null)
+const fileType = ref('')
+const fileError = ref<string | null>(null)
+const showOriginal = ref(true)
+
+const isImage = computed(() => fileType.value.startsWith('image/'))
+const isPdf = computed(() => fileType.value === 'application/pdf')
+const downloadName = computed(() => {
+  const ext = isPdf.value ? 'pdf' : isImage.value ? fileType.value.split('/')[1] : 'bin'
+  return `beleg-${id}.${ext}`
+})
+
+async function loadOriginal() {
+  fileError.value = null
+  try {
+    const blob = await api<Blob>(`/receipts/${id}/file`, { responseType: 'blob' })
+    fileType.value = blob.type
+    if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
+    fileUrl.value = URL.createObjectURL(blob)
+  } catch {
+    fileError.value = 'Beleg konnte nicht geladen werden.'
+  }
+}
+
+function openOriginal() {
+  if (fileUrl.value) window.open(fileUrl.value, '_blank')
+}
+
+onMounted(loadOriginal)
+onUnmounted(() => {
+  if (fileUrl.value) URL.revokeObjectURL(fileUrl.value)
+})
+
 function payload(row: EditRow) {
   const num = (v: string) => (v.trim() === '' ? null : v.trim())
   return {
@@ -336,6 +373,48 @@ async function removeReceipt() {
         >
           {{ reprocessing ? 'Verarbeite …' : 'Neu verarbeiten' }}
         </button>
+      </div>
+    </div>
+
+    <!-- Original receipt (image / PDF) -->
+    <div class="rounded-lg border bg-white shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b p-3">
+        <h2 class="font-medium">Beleg (Original)</h2>
+        <div v-if="fileUrl" class="flex items-center gap-3 text-sm">
+          <button class="text-gray-600 hover:text-green-700" @click="showOriginal = !showOriginal">
+            {{ showOriginal ? 'Ausblenden' : 'Anzeigen' }}
+          </button>
+          <button class="text-green-700 hover:underline" @click="openOriginal">
+            In neuem Tab öffnen
+          </button>
+          <a :href="fileUrl" :download="downloadName" class="text-green-700 hover:underline">
+            Herunterladen
+          </a>
+        </div>
+      </div>
+      <div class="p-3">
+        <p v-if="fileError" class="text-sm text-red-600">{{ fileError }}</p>
+        <p v-else-if="!fileUrl" class="text-sm text-gray-500">Lädt Beleg …</p>
+        <template v-else-if="showOriginal">
+          <img
+            v-if="isImage"
+            :src="fileUrl"
+            alt="Original-Beleg"
+            class="max-h-[70vh] w-auto rounded border"
+          >
+          <iframe
+            v-else-if="isPdf"
+            :src="fileUrl"
+            class="h-[70vh] w-full rounded border"
+            title="Original-Beleg (PDF)"
+          />
+          <p v-else class="text-sm text-gray-500">
+            Vorschau nicht möglich —
+            <button class="text-green-700 hover:underline" @click="openOriginal">
+              im Tab öffnen
+            </button>.
+          </p>
+        </template>
       </div>
     </div>
 

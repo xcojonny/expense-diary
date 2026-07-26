@@ -50,6 +50,22 @@ async def test_upload_creates_receipt(app_client: httpx.AsyncClient) -> None:
     assert any(r["id"] == receipt_id for r in listing.json())
 
 
+async def test_get_receipt_file_returns_original(app_client: httpx.AsyncClient) -> None:
+    receipt_id = await _upload(app_client)
+    resp = await app_client.get(f"/api/v1/receipts/{receipt_id}/file")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content == PNG_1X1
+    assert "inline" in resp.headers.get("content-disposition", "")
+
+
+async def test_get_receipt_file_unknown_is_404(app_client: httpx.AsyncClient) -> None:
+    import uuid
+
+    resp = await app_client.get(f"/api/v1/receipts/{uuid.uuid4()}/file")
+    assert resp.status_code == 404
+
+
 async def test_upload_rejects_unsupported_type(app_client: httpx.AsyncClient) -> None:
     resp = await app_client.post(
         "/api/v1/receipts",

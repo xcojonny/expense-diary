@@ -1,6 +1,14 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -9,6 +17,7 @@ from app.api.deps import get_arq, get_current_group_id
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.domain.upload import detect_media_type
+from app.integrations.storage.local import get_storage
 from app.models import LineItem, Receipt, ReceiptStatus
 from app.schemas.receipt import (
     LineItemOut,
@@ -92,6 +101,33 @@ async def get_receipt(
     if receipt is None:
         raise HTTPException(status_code=404, detail="Bon nicht gefunden.")
     return receipt
+
+
+@router.get("/{receipt_id}/file")
+async def get_receipt_file(
+    receipt_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    group_id: uuid.UUID = Depends(get_current_group_id),
+) -> Response:
+    """Stream the original uploaded receipt (image or PDF) so the user can view
+    it against the extracted data. Group-scoped — unlike the raw ``/media`` mount
+    this enforces the same tenancy seam as every other receipt route."""
+    receipt = await _get_owned_receipt(db, receipt_id, group_id)
+    try:
+        data = get_storage().read(receipt.image_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Beleg-Datei nicht gefunden.") from exc
+    media_type = detect_media_type(data) or "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={
+            # inline so the browser renders it in a tab/frame instead of forcing
+            # a download; the stored file content never changes for a receipt.
+            "Content-Disposition": f'inline; filename="{receipt.image_path}"',
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 async def _get_owned_receipt(
