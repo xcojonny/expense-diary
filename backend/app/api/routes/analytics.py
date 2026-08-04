@@ -47,11 +47,12 @@ async def monthly(
     report = await analytics_service.monthly(session, year=resolved_year, month=resolved_month)
     start, end = analytics_service.month_range(resolved_year, resolved_month)
     unreviewed = await analytics_service.count_unreviewed(session, start=start, end=end)
+    receipt_count = await analytics_service.count_receipts(session, start=start, end=end)
 
     return MonthlyReportOut(
         year=report.year,
         month=report.month,
-        receipt_count=report.receipt_count,
+        receipt_count=receipt_count,
         unreviewed_count=unreviewed,
         total_cents=report.total_cents,
         product_total_cents=report.product_total_cents,

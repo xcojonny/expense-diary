@@ -97,6 +97,23 @@ async def fetch_records(
     ]
 
 
+async def count_receipts(session: AsyncSession, *, start: datetime, end: datetime) -> int:
+    """Bons im Zeitraum — auch solche ohne erkannte Positionen.
+
+    Die Aggregation zählt nur Bons, die Positionen beigesteuert haben; für die
+    Anzeige ist die Zahl aller Bons die wahrheitsgemäße.
+    """
+    return (
+        await session.execute(
+            sa.select(sa.func.count(Receipt.id)).where(
+                Receipt.status.in_(ANALYZED_STATUSES),
+                effective_date() >= start,
+                effective_date() < end,
+            )
+        )
+    ).scalar_one()
+
+
 async def count_unreviewed(session: AsyncSession, *, start: datetime, end: datetime) -> int:
     return (
         await session.execute(

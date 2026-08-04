@@ -94,6 +94,7 @@ async def march(client: httpx.AsyncClient) -> httpx.AsyncClient:
 async def test_monthly_report_numbers(march: httpx.AsyncClient) -> None:
     report = (await march.get("/api/analytics/monthly", params={"year": 2026, "month": 3})).json()
 
+    # Zählt alle Bons des Monats — auch einen ohne erkannte Positionen.
     assert report["receipt_count"] == 2
     assert report["product_total_cents"] == 109 + 249 + 199 + 119
     assert report["deposit_total_cents"] == 25
@@ -250,3 +251,4 @@ async def test_unreviewed_receipts_are_counted_but_still_included(
     ).json()
     assert report["total_cents"] == 500
     assert report["unreviewed_count"] == 1
+    assert report["receipt_count"] == 1

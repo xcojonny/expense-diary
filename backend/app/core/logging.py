@@ -20,6 +20,9 @@ _RESERVED = frozenset(
         "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
         "created", "msecs", "relativeCreated", "thread", "threadName",
         "processName", "process", "taskName", "message", "asctime",
+        # uvicorn hängt an jede Zeile eine ANSI-Variante seiner Meldung — im
+        # eigenen Format ist das nur Rauschen.
+        "color_message",
     }
 )
 
@@ -69,6 +72,9 @@ def configure_logging(level: str = "INFO", fmt: str = "text") -> None:
         logger.propagate = True
     # Der Access-Log ist bei einem Haushalt Rauschen.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Alembic protokolliert beim Start jedes geladene Plugin. Was zählt — ob eine
+    # Migration lief — loggt die App selbst (`db.migrated`).
+    logging.getLogger("alembic").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> logging.Logger:

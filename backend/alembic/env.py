@@ -20,7 +20,10 @@ from app.core.config import get_settings
 from app.models import Base  # importiert alle Modelle
 
 config = context.config
-if config.config_file_name is not None:
+# Läuft Alembic aus der App heraus (Start-Migration), hat die App ihr Logging
+# schon eingerichtet — `fileConfig` würde es überschreiben und bei jedem Start
+# die Plugin-Meldungen von Alembic ausgeben.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 if not config.get_main_option("sqlalchemy.url", None):

@@ -141,8 +141,9 @@ zusätzlich eine Mandantenspalte an `receipts` und `items`.
 Server-Routes, kein Nitro — der volle Nuxt-Stack für eine SPA, die anschließend
 ein separater nginx-Container auslieferte.
 
-**Entscheidung.** Vite + Vue 3 + TypeScript + vue-router + Pinia + Tailwind v4
-+ `vite-plugin-pwa`. Ausgeliefert wird das Build-Ergebnis von FastAPI selbst.
+**Entscheidung.** Vite + Vue 3 + TypeScript + vue-router + `vite-plugin-pwa`.
+Ausgeliefert wird das Build-Ergebnis von FastAPI selbst. (Tailwind und Pinia
+fallen ebenfalls weg — siehe [ADR-011](#adr-011).)
 
 **Warum.** Von Nuxt blieben faktisch nur Datei-Routing und Auto-Imports übrig.
 Für elf Seiten ist eine explizite Router-Tabelle *lesbarer* als Datei-Magie, und
@@ -261,3 +262,43 @@ Wegfall von Postgres und Redis ist die Alternative geschenkt.
 belanglos, weil SQLite auch produktiv läuft. Die Fixtures liegen in
 `tests/conftest.py`, Umgebungsvariablen werden dort explizit gesetzt statt
 `setdefault` (der Fehler, der zum Port-Widerspruch führte).
+
+---
+
+## ADR-011 — Design-System aus Tokens statt Utility-Klassen {#adr-011}
+
+**Kontext.** Der Altstand nutzte Tailwind ohne Design-Ebene darüber:
+`rounded border bg-white p-4` stand rund 30× wortgleich im Code, Farben wie
+`bg-green-600` und `text-gray-500` waren über elf Seiten verstreut, `main.css`
+enthielt genau eine Zeile. Es gab zwei Komponenten für elf Seiten, keinen Dark
+Mode und keine Skeletons.
+
+**Entscheidung.** Kein Tailwind, kein Pinia. Statt dessen:
+
+1. `styles/tokens.css` — die **einzige** Datei mit Farbwerten, je für Light und
+   Dark.
+2. `ui/` — Primitives (Button, Card, Badge, Input, Select, MoneyInput, Modal,
+   Skeleton, Empty, Toast, Stat, Segmented, Icon).
+3. Alles Weitere in `<style scoped>` der jeweiligen Komponente.
+4. Zustand in Modulen mit `ref`s statt in einem Store-Framework.
+
+**Warum.** Die Duplikation im Altstand entstand nicht durch Tailwind, sondern
+durch die fehlende Ebene darüber — Seiten wurden vor den Bausteinen gebaut.
+Diese Reihenfolge umzudrehen ist die eigentliche Korrektur; Tailwind wird danach
+nicht mehr gebraucht, weil jede Komponente ihre Stile ohnehin selbst besitzt.
+Nebeneffekte: „kein Hex-Wert außerhalb von `tokens.css`“ ist eine prüfbare
+Regel, der Dark Mode entsteht aus derselben Quelle statt aus `dark:`-Varianten an
+jeder Klasse, und eine Build-Abhängigkeit fällt weg. Pinia entfällt, weil es zwei
+Zustände gibt (Session, Kategorien) und keiner Zeitreise oder SSR-Isolierung
+braucht.
+
+**Konsequenzen.**
+- Scoped CSS ist etwas mehr Text als eine Utility-Kette, aber lokal und benannt.
+- Wer ein neues Element baut, greift zuerst in `ui/` — fehlt dort etwas, gehört
+  es dort hinein und nicht in die Seite.
+- Ohne Utility-Klassen gibt es keinen „Notausgang“ für Einzelfälle; einige
+  Layout-Helfer (`stack`, `row`, `grid-cards`, `num`, `truncate`) stehen deshalb
+  global in `base.css`.
+
+**Zurücknehmen.** Tailwind ließe sich zusätzlich einführen, ohne die Primitives
+anzutasten — die Tokens wären dann seine Theme-Quelle.

@@ -42,9 +42,12 @@ async def _prepare_database(settings: Settings) -> None:
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     config.set_main_option("sqlalchemy.url", settings.sqlalchemy_url)
+    # Unser Logging steht schon — Alembic soll es nicht überschreiben.
+    config.attributes["configure_logger"] = False
 
     # Alembic ist synchron — im Thread laufen lassen, damit der Loop frei bleibt.
     await anyio.to_thread.run_sync(lambda: command.upgrade(config, "head"))
+    log.info("db.migrated", extra={"url": settings.sqlalchemy_url.split("///")[-1]})
 
     async with get_sessionmaker()() as session:
         created = await seed_categories(session)
@@ -120,7 +123,9 @@ def _mount_spa(app: FastAPI) -> None:
 
     index_file = STATIC_DIR / "index.html"
 
-    @app.get("/{path:path}", include_in_schema=False)
+    # `response_model=None`: FastAPI würde sonst versuchen, aus dem
+    # Rückgabetyp ein Antwort-Schema abzuleiten, und scheitert an der Union.
+    @app.get("/{path:path}", include_in_schema=False, response_model=None)
     async def spa(request: Request, path: str) -> FileResponse | JSONResponse:
         if path.startswith("api/"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)

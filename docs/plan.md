@@ -78,20 +78,21 @@ temporäre SQLite-Datei; kein laufender Dienst nötig.
 ## Phase 5 — Frontend: Design-System zuerst ✅
 
 Reihenfolge ist bewusst: erst Tokens und Primitives, dann Seiten. Die
-Utility-Ketten-Duplikation des Altstands entstand, weil es umgekehrt lief.
+Utility-Ketten-Duplikation des Altstands entstand, weil es umgekehrt lief
+([ADR-011](entscheidungen.md#adr-011)).
 
 1. **Tokens** (`styles/tokens.css`): Farben, Flächen, Radien, Schatten,
    Chart-Palette — je für Light und Dark. Keine Farbe direkt in einer
    Komponente.
-2. **Primitives** (`ui/`): Button, Card, Badge, Input, Select, Modal, Skeleton,
-   EmptyState, Toast, StatTile, SegmentedControl, Spinner.
+2. **Primitives** (`ui/`): Button, Card, Badge, Field, Input, Select,
+   MoneyInput, Modal, Skeleton, Empty, Toasts, Stat, Segmented, Icon.
 3. **Charts** (`charts/`, handgeschriebenes SVG, keine Abhängigkeit):
-   DonutChart (Kategorien), LineChart (Preisverlauf mit Achsen und Hover),
-   BarList (Rankings), Sparkline.
-4. **Shell**: Sidebar auf Desktop, Bottom-Nav + Kamera-FAB auf Mobil,
+   ChartDonut (Kategorien), ChartLine (Preisverlauf mit Achsen und Hover),
+   ChartBars (Ranglisten).
+4. **Shell**: Sidebar auf Desktop, Bottom-Nav + Kamera-Knopf auf Mobil,
    Theme-Umschalter, Toast-Host.
-5. **Seiten**: Übersicht, Bons, Bon-Detail, Bericht, Kategorien,
-   Einstellungen, Login.
+5. **Seiten**: Übersicht, Bon erfassen, Bons, Bon-Detail, Bericht, Kategorien,
+   Einstellungen, Login, 404.
 
 Datenladen über `useResource` — **pro Widget**, mit eigenem Skeleton- und
 Fehlerzustand und Retry-Knopf. Kein `Promise.all`, das eine ganze Seite
