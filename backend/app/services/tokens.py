@@ -14,18 +14,27 @@ from app.db.base import utcnow
 from app.models import ApiToken
 
 
-async def list_tokens(session: AsyncSession) -> list[ApiToken]:
+async def list_tokens(session: AsyncSession, *, user_id: int) -> list[ApiToken]:
+    """Nur die eigenen Tokens — fremde sieht man nicht und widerruft man nicht."""
     return list(
-        (await session.execute(sa.select(ApiToken).order_by(ApiToken.created_at.desc())))
+        (
+            await session.execute(
+                sa.select(ApiToken)
+                .where(ApiToken.user_id == user_id)
+                .order_by(ApiToken.created_at.desc())
+            )
+        )
         .scalars()
         .all()
     )
 
 
-async def create_token(session: AsyncSession, *, name: str) -> tuple[ApiToken, str]:
+async def create_token(
+    session: AsyncSession, *, user_id: int, name: str
+) -> tuple[ApiToken, str]:
     """`(datensatz, klartext)` — der Klartext ist danach nicht wiederherstellbar."""
     plain, digest = generate_api_token()
-    token = ApiToken(name=name.strip() or "Unbenannt", token_hash=digest)
+    token = ApiToken(user_id=user_id, name=name.strip() or "Unbenannt", token_hash=digest)
     session.add(token)
     await session.flush()
     return token, plain
@@ -48,5 +57,9 @@ async def revoke(session: AsyncSession, token: ApiToken) -> None:
     await session.flush()
 
 
-async def get(session: AsyncSession, token_id: int) -> ApiToken | None:
-    return await session.get(ApiToken, token_id)
+async def get(session: AsyncSession, token_id: int, *, user_id: int) -> ApiToken | None:
+    return (
+        await session.execute(
+            sa.select(ApiToken).where(ApiToken.id == token_id, ApiToken.user_id == user_id)
+        )
+    ).scalar_one_or_none()

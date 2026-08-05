@@ -12,6 +12,8 @@ withDefaults(
     options: SelectOption[]
     placeholder?: string
     disabled?: boolean
+    /** Für Auswahlfelder ohne sichtbares Label, z. B. in einer Tabellenzeile. */
+    ariaLabel?: string
   }>(),
   {},
 )
@@ -21,7 +23,13 @@ const model = defineModel<string>({ default: '' })
 
 <template>
   <div class="select">
-    <select :id="id" v-model="model" :disabled="disabled" class="select__control">
+    <select
+      :id="id"
+      v-model="model"
+      :disabled="disabled"
+      :aria-label="ariaLabel"
+      class="select__control"
+    >
       <option v-if="placeholder" value="">{{ placeholder }}</option>
       <option v-for="option in options" :key="option.value" :value="option.value">
         {{ option.label }}

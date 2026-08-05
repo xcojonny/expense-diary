@@ -40,12 +40,26 @@ from fastapi import FastAPI  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from app.api.routes import auth as auth_routes  # noqa: E402
-from app.core.config import get_settings  # noqa: E402
+from app.core.config import AuthMode, Settings, get_settings  # noqa: E402
 from app.db.session import get_sessionmaker  # noqa: E402
 from app.integrations.llm import set_vision_model  # noqa: E402
+from app.integrations.mail import Email, set_mailer  # noqa: E402
+from app.integrations.oidc import OidcUser, set_oidc_client  # noqa: E402
 
 # Bewegungsdaten; `categories` bleibt stehen (einmal geseedet).
-_MUTABLE_TABLES = ("jobs", "line_items", "receipts", "items", "api_tokens")
+# Reihenfolge zählt: Kinder vor Eltern, sonst greifen die Fremdschlüssel.
+_MUTABLE_TABLES = (
+    "jobs",
+    "line_items",
+    "receipts",
+    "items",
+    "api_tokens",
+    "invitations",
+    "oidc_identities",
+    "household_members",
+    "households",
+    "users",
+)
 
 
 @pytest.fixture(scope="session")
@@ -65,9 +79,13 @@ async def app() -> AsyncIterator[FastAPI]:
 
 @pytest.fixture(autouse=True)
 async def _clean_state() -> AsyncIterator[None]:
-    """Bewegungsdaten leeren, Modell-Override und Login-Limit zurücksetzen."""
+    """Bewegungsdaten leeren, alle Overrides und das Login-Limit zurücksetzen."""
     set_vision_model(None)
+    set_oidc_client(None)
+    set_mailer(None)
     auth_routes.reset_login_limiter()
+    # Auth-Modus zurück auf den Default; einzelne Tests stellen ihn um.
+    get_settings().auth_mode = AuthMode.PASSWORD
     async with get_sessionmaker()() as session:
         for table in _MUTABLE_TABLES:
             await session.execute(sa.text(f"DELETE FROM {table}"))
@@ -112,6 +130,65 @@ async def client(anon_client: httpx.AsyncClient) -> AsyncIterator[httpx.AsyncCli
     response = await anon_client.post("/api/auth/login", json={"password": TEST_PASSWORD})
     assert response.status_code == 200, response.text
     yield anon_client
+
+
+# --- Mehrbenutzer -------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_user(settings: Settings) -> AsyncIterator[None]:
+    """Instanz auf `trusted_header` stellen — der einfachste Mehrbenutzer-Modus
+    für Tests: der „Proxy" ist ein Header, den der Testclient setzt."""
+    settings.auth_mode = AuthMode.TRUSTED_HEADER
+    yield
+    settings.auth_mode = AuthMode.PASSWORD
+
+
+def as_user(email: str, name: str = "") -> dict[str, str]:
+    """Header, mit denen der Testclient als dieser Mensch auftritt."""
+    return {"Remote-User": email, "Remote-Email": email, "Remote-Name": name or email}
+
+
+class FakeMailer:
+    """Mailer-Attrappe: hält Mails im Speicher, damit Tests den Link lesen."""
+
+    def __init__(self) -> None:
+        self.sent: list[Email] = []
+
+    async def send(self, email: Email) -> None:
+        self.sent.append(email)
+
+    def last_link(self) -> str:
+        assert self.sent, "keine Mail verschickt"
+        for word in self.sent[-1].body.split():
+            if word.startswith("http"):
+                return word
+        raise AssertionError(f"kein Link in der Mail: {self.sent[-1].body!r}")
+
+
+class FakeOidcClient:
+    """OIDC-Attrappe: liefert eine vorgegebene Identität statt einen echten
+    Identity Provider anzusprechen."""
+
+    def __init__(self, user: OidcUser | None = None, error: Exception | None = None) -> None:
+        self._user = user
+        self._error = error
+        self.configured = True
+        self.states: list[str] = []
+
+    def new_state(self) -> str:
+        state = f"state-{len(self.states)}"
+        self.states.append(state)
+        return state
+
+    async def authorization_url(self, *, state: str) -> str:
+        return f"https://idp.example.org/authorize?state={state}"
+
+    async def exchange(self, *, code: str) -> OidcUser:
+        if self._error is not None:
+            raise self._error
+        assert self._user is not None
+        return self._user
 
 
 async def drain_jobs() -> int:

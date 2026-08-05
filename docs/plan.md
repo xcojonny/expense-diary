@@ -113,6 +113,39 @@ vollständig; jede Liste hat Empty State und Fehlerzustand; Geld ausschließlich
 **Abnahme:** `make check` grün **ohne** externe Dienste; App startet, Login,
 Upload, Bericht real durchgeklickt und per Screenshot belegt.
 
+## Phase 7 — Mehrbenutzerbetrieb ✅
+
+Nachgezogen, nachdem der Mehrbenutzerbetrieb doch gewünscht war. Leitlinie:
+getrennte Daten ja, selbstgebaute Anmeldung nein
+([ADR-004](entscheidungen.md#adr-004)).
+
+1. **Datenmodell**: `households`, `household_members` (Rollen `admin`/`member`),
+   `invitations`, `users` ohne Passwortspalte, `oidc_identities` mit
+   `UNIQUE (issuer, subject)`. `receipts` und `items` bekommen
+   `household_id NOT NULL`; `items` zusätzlich
+   `UNIQUE (household_id, normalized_name)`. Kategorien bleiben global
+   ([ADR-012](entscheidungen.md#adr-012)).
+2. **Migration** `0002_households`: Spalten erst nullable, Backfill eines
+   Default-Haushalts nur wenn Daten existieren, dann `NOT NULL`. Der Downgrade
+   verweigert, sobald mehr als ein Haushalt da ist — lieber ein klarer Abbruch
+   als stille Datenvermischung.
+3. **Mandantenschnitt**: `require_user` → `require_household` →
+   `require_household_admin`. Jede Abfrage auf Bons, Positionen, Artikel und
+   Auswertungen filtert nach `household_id`; fremde IDs geben 404.
+4. **OIDC**: Authorization-Code-Flow mit Discovery, `state`-Cookie und
+   `userinfo` statt JWKS ([ADR-014](entscheidungen.md#adr-014)).
+5. **Einladungen**: Token-Link mit Ablauf, Mailversand über `smtplib` im Thread,
+   ohne SMTP wird der Link zurückgegeben
+   ([ADR-013](entscheidungen.md#adr-013)).
+6. **Frontend**: Haushaltswechsler in Sidebar und Topbar, Haushaltsseite
+   (Name, Mitglieder, Rollen, Einladungen, weiterer Haushalt, löschen),
+   SSO-Knopf auf der Anmeldeseite, Seite zum Einlösen einer Einladung.
+
+**Abnahme:** `test_tenancy.py` prüft **jeden** Endpoint mit Mandantenbezug auf
+Trennung — nicht nur ein Beispiel. Dazu Rollen- und Einladungstests
+(`test_households.py`), OIDC gegen eine Provider-Attrappe (`test_oidc.py`) und
+Frontend-Tests für Wechsler, SSO-Maske und Einladungsseite.
+
 ## Bewusst nicht gemacht
 
 - **Kein Datenmigrationspfad vom Altstand.** PR #1 ist nicht gemerged, das

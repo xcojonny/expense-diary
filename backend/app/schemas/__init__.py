@@ -23,11 +23,80 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class HouseholdOut(ApiModel):
+    id: int
+    name: str
+
+
+class MembershipOut(BaseModel):
+    household_id: int
+    household_name: str
+    role: str
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    display_name: str
+    memberships: list[MembershipOut]
+
+
 class SessionInfo(ApiModel):
     authenticated: bool
     auth_mode: str
     # Bei trusted_header/none gibt es keine Anmeldemaske — die UI blendet sie aus.
     login_required: bool
+    # Nur in mehrbenutzerfähigen Modi gibt es Haushalte und Einladungen.
+    multi_user: bool = False
+    # SSO-Knopf nur zeigen, wenn OIDC wirklich konfiguriert ist.
+    sso_available: bool = False
+    user: UserOut | None = None
+    active_household_id: int | None = None
+
+
+class HouseholdCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class HouseholdUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class MemberOut(BaseModel):
+    id: int
+    user_id: int
+    email: str
+    display_name: str
+    role: str
+
+
+class MemberUpdate(BaseModel):
+    role: str = Field(pattern="^(admin|member)$")
+
+
+class InvitationOut(ApiModel):
+    id: int
+    email: str
+    role: str
+    expires_at: datetime
+    created_at: datetime
+
+
+class InvitationCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = Field(default="member", pattern="^(admin|member)$")
+
+
+class InvitationCreated(BaseModel):
+    invitation: InvitationOut
+    # Der Link wird per Mail verschickt. Ohne SMTP steht er hier, damit man ihn
+    # weitergeben kann — `mail_sent` sagt, welcher Fall vorliegt.
+    link: str
+    mail_sent: bool
+
+
+class InvitationAccept(BaseModel):
+    token: str = Field(min_length=8)
 
 
 # --- Kategorien ---------------------------------------------------------------
@@ -249,6 +318,8 @@ class HealthOut(BaseModel):
     status: str
     version: str
     auth_mode: str
+    multi_user: bool
     llm_provider: str
     llm_ready: bool
+    mail_ready: bool
     queued_jobs: int

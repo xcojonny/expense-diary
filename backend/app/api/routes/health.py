@@ -35,7 +35,9 @@ async def health(session: SessionDep, settings: SettingsDep) -> HealthOut:
         status="ok",
         version=VERSION,
         auth_mode=settings.auth_mode.value,
+        multi_user=settings.auth_mode.is_multi_user,
         llm_provider=settings.llm_provider.value,
         llm_ready=model.available,
+        mail_ready=settings.mail_configured,
         queued_jobs=queued,
     )

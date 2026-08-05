@@ -11,13 +11,14 @@
 import { computed } from 'vue'
 import { RouteRecordName, useRoute } from 'vue-router'
 
+import HouseholdSwitcher from '@/components/HouseholdSwitcher.vue'
 import { useSession } from '@/stores/session'
 import { applyTheme, theme } from '@/lib/theme'
 import UiButton from '@/ui/UiButton.vue'
 import UiIcon from '@/ui/UiIcon.vue'
 
 const route = useRoute()
-const { logout, loginRequired, health } = useSession()
+const { logout, canLogout, health, multiUser, user } = useSession()
 
 interface NavEntry {
   to: string
@@ -26,6 +27,8 @@ interface NavEntry {
   /** Auf Mobil zeigt die Bottom-Navigation nur vier Ziele. */
   primary: boolean
   name: RouteRecordName
+  /** Nur in mehrbenutzerfähigen Modi sinnvoll (ADR-004). */
+  multiUserOnly?: boolean
 }
 
 const NAV: NavEntry[] = [
@@ -33,10 +36,21 @@ const NAV: NavEntry[] = [
   { to: '/bons', label: 'Bons', icon: 'receipt', primary: true, name: 'receipts' },
   { to: '/bericht', label: 'Bericht', icon: 'chart', primary: true, name: 'report' },
   { to: '/kategorien', label: 'Kategorien', icon: 'tag', primary: false, name: 'categories' },
+  {
+    to: '/haushalt',
+    label: 'Haushalt',
+    icon: 'users',
+    primary: false,
+    name: 'household',
+    multiUserOnly: true,
+  },
   { to: '/einstellungen', label: 'Mehr', icon: 'settings', primary: true, name: 'settings' },
 ]
 
-const primaryNav = computed(() => NAV.filter((entry) => entry.primary))
+/** Der Haushalts-Eintrag fällt im Einzelnutzer-Modus weg — dort ist er leer. */
+const nav = computed(() => NAV.filter((entry) => !entry.multiUserOnly || multiUser.value))
+
+const primaryNav = computed(() => nav.value.filter((entry) => entry.primary))
 
 const themeIcon = computed(() => (theme.value === 'dark' ? 'moon' : 'sun'))
 
@@ -63,9 +77,11 @@ const queued = computed(() => health.value?.queued_jobs ?? 0)
         <span class="brand__text">Haushaltsbuch</span>
       </RouterLink>
 
+      <HouseholdSwitcher v-if="multiUser" class="sidebar__switcher" />
+
       <nav class="sidenav" aria-label="Hauptnavigation">
         <RouterLink
-          v-for="entry in NAV"
+          v-for="entry in nav"
           :key="entry.to"
           :to="entry.to"
           class="sidenav__link"
@@ -81,12 +97,19 @@ const queued = computed(() => health.value?.queued_jobs ?? 0)
           <UiIcon name="camera" :size="17" />
           <span>Bon erfassen</span>
         </RouterLink>
+
+        <!-- Wer ist angemeldet: bei getrennten Daten die zweite Hälfte der
+             Antwort auf „wessen Bons sehe ich hier?" -->
+        <p v-if="multiUser && user" class="sidebar__who" :title="user.email">
+          {{ user.display_name }}
+        </p>
+
         <div class="sidebar__tools">
           <UiButton variant="ghost" size="sm" :title="themeTitle" @click="cycleTheme">
             <UiIcon :name="themeIcon" :size="16" />
             <span class="sr-only">Design wechseln</span>
           </UiButton>
-          <UiButton v-if="loginRequired" variant="ghost" size="sm" title="Abmelden" @click="logout">
+          <UiButton v-if="canLogout" variant="ghost" size="sm" title="Abmelden" @click="logout">
             <UiIcon name="logout" :size="16" />
             <span class="sr-only">Abmelden</span>
           </UiButton>
@@ -96,7 +119,10 @@ const queued = computed(() => health.value?.queued_jobs ?? 0)
 
     <div class="main">
       <header class="topbar">
-        <RouterLink to="/" class="topbar__brand">
+        <!-- Auf Mobil ersetzt der Wechsler den Markennamen: welcher Haushalt
+             gerade aktiv ist, ist die wichtigere Information. -->
+        <HouseholdSwitcher v-if="multiUser" class="topbar__switcher" />
+        <RouterLink v-else to="/" class="topbar__brand">
           <span class="brand__mark"><UiIcon name="receipt" :size="15" /></span>
           Haushaltsbuch
         </RouterLink>
@@ -234,6 +260,21 @@ const queued = computed(() => health.value?.queued_jobs ?? 0)
   text-decoration: none;
 }
 
+.sidebar__switcher {
+  /* Der negative Rand hebt den Abstand des `gap: 20px` der Sidebar teilweise
+     auf — der Wechsler gehört optisch zur Marke, nicht zur Navigation. */
+  margin-top: -8px;
+}
+
+.sidebar__who {
+  overflow: hidden;
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar__tools {
   display: flex;
   gap: 4px;
@@ -270,6 +311,11 @@ const queued = computed(() => health.value?.queued_jobs ?? 0)
   color: var(--text);
   font-weight: 600;
   text-decoration: none;
+}
+
+.topbar__switcher {
+  /* Nicht die ganze Breite: rechts stehen Warteschlange und Design-Schalter. */
+  max-width: 62%;
 }
 
 .topbar__queue {

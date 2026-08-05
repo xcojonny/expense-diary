@@ -15,7 +15,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
-from app.api.routes import analytics, auth, categories, health, receipts, tokens
+from app.api.routes import (
+    analytics,
+    auth,
+    categories,
+    health,
+    households,
+    receipts,
+    tokens,
+)
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import dispose_engine
@@ -36,6 +44,7 @@ async def _prepare_database(settings: Settings) -> None:
     from alembic import command
     from app.db.session import get_sessionmaker
     from app.seed import seed_categories
+    from app.services import users as users_service
 
     # Einmalig beim Start, vor dem ersten Request — synchron ist hier richtig.
     backend_dir = Path(__file__).resolve().parent.parent  # noqa: ASYNC240
@@ -51,6 +60,9 @@ async def _prepare_database(settings: Settings) -> None:
 
     async with get_sessionmaker()() as session:
         created = await seed_categories(session)
+        # In den Einzelnutzer-Modi den impliziten Nutzer samt Haushalt anlegen;
+        # in den Mehrbenutzer-Modi entstehen Nutzer beim ersten Login.
+        await users_service.bootstrap(session, settings)
         await session.commit()
     if created:
         log.info("seed.categories_created", extra={"count": created})
@@ -96,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api = APIRouter(prefix="/api")
     api.include_router(health.router)
     api.include_router(auth.router)
+    api.include_router(households.router)
     api.include_router(receipts.router)
     api.include_router(categories.router)
     api.include_router(analytics.router)

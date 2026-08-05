@@ -92,6 +92,15 @@ Backend-Zeilen** — knapp ein Drittel des Backends für ein ausdrücklich
 gestrichenes Feature. Diese Zeilen erklären auch, warum Redis, SMTP und der
 Log-Ring überhaupt gebraucht wurden.
 
+> **Nachtrag.** Der Mehrbenutzerbetrieb ist inzwischen ausdrücklich **gewollt**
+> und umgesetzt ([ADR-004](entscheidungen.md#adr-004)). Der Befund oben bleibt
+> trotzdem gültig — er richtet sich gegen den *Umfang*, nicht gegen das Feature:
+> Magic-Links mit Browser-Bindung, Pairing-Codes und Refresh-Token-Familien mit
+> Reuse-Detection waren der teure Teil und sind auch in der neuen Fassung
+> draußen. Getrennte Daten pro Haushalt sind eine Datenmodell-Frage und kosten
+> eine Spalte plus eine Dependency; die Anmeldung selbst delegieren wir an einen
+> Identity Provider oder den Proxy.
+
 ### 2.6 Geld als String über die API
 
 Beträge lagen als `Numeric` in der DB und wurden als JSON-**String**

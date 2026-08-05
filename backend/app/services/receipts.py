@@ -29,6 +29,7 @@ class UploadError(ValueError):
 async def create_from_upload(
     session: AsyncSession,
     *,
+    household_id: int,
     data: bytes,
     file_store: FileStore,
     max_bytes: int,
@@ -50,6 +51,7 @@ async def create_from_upload(
 
     relative_path = await file_store.save(data, media_type)
     receipt = Receipt(
+        household_id=household_id,
         status=ReceiptStatus.UPLOADED.value,
         file_path=relative_path,
         file_media_type=media_type,
@@ -62,22 +64,40 @@ async def create_from_upload(
     await jobs_service.enqueue(session, receipt.id)
     log.info(
         "receipt.uploaded",
-        extra={"receipt_id": receipt.id, "media_type": media_type, "bytes": len(data)},
+        extra={
+            "receipt_id": receipt.id,
+            "household_id": household_id,
+            "media_type": media_type,
+            "bytes": len(data),
+        },
     )
     return receipt
 
 
-async def get(session: AsyncSession, receipt_id: int) -> Receipt | None:
+async def get(session: AsyncSession, receipt_id: int, *, household_id: int) -> Receipt | None:
+    """Bon laden — nur innerhalb des Haushalts. Ein fremder Bon ist „nicht
+    gefunden", nicht „verboten": so verrät die API nicht, welche IDs existieren."""
     return (
-        await session.execute(sa.select(Receipt).where(Receipt.id == receipt_id))
+        await session.execute(
+            sa.select(Receipt).where(
+                Receipt.id == receipt_id, Receipt.household_id == household_id
+            )
+        )
     ).scalar_one_or_none()
 
 
 async def list_receipts(
-    session: AsyncSession, *, status: str | None = None, limit: int = 50, offset: int = 0
+    session: AsyncSession,
+    *,
+    household_id: int,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> tuple[list[Receipt], int]:
     """`(bons, gesamtzahl)` — neueste zuerst, nach wirksamem Kaufdatum."""
-    conditions = [Receipt.status == status] if status else []
+    conditions: list[sa.ColumnElement[bool]] = [Receipt.household_id == household_id]
+    if status:
+        conditions.append(Receipt.status == status)
     effective = sa.func.coalesce(Receipt.purchased_at, Receipt.created_at)
 
     total = (
@@ -164,19 +184,32 @@ async def add_line_item(
     )
     session.add(line_item)
     await session.flush()
-    await items_service.apply_product_mapping(session, line_item)
+    await items_service.apply_product_mapping(
+        session, line_item, household_id=receipt.household_id
+    )
     await session.flush()
     return line_item
 
 
-async def get_line_item(session: AsyncSession, line_item_id: int) -> LineItem | None:
-    return await session.get(LineItem, line_item_id)
+async def get_line_item(
+    session: AsyncSession, line_item_id: int, *, household_id: int
+) -> LineItem | None:
+    """Position laden — über den Bon auf den Haushalt geprüft. Ohne diesen Join
+    wäre `/line-items/{id}` ein Loch in der Mandantentrennung."""
+    return (
+        await session.execute(
+            sa.select(LineItem)
+            .join(Receipt, LineItem.receipt_id == Receipt.id)
+            .where(LineItem.id == line_item_id, Receipt.household_id == household_id)
+        )
+    ).scalar_one_or_none()
 
 
 async def update_line_item(
     session: AsyncSession,
     line_item: LineItem,
     *,
+    household_id: int,
     name: str | None = None,
     total_price_cents: int | None = None,
     quantity_milli: int | None = None,
@@ -215,7 +248,9 @@ async def update_line_item(
         )
 
     if remap:
-        await items_service.apply_product_mapping(session, line_item)
+        await items_service.apply_product_mapping(
+            session, line_item, household_id=household_id
+        )
 
     await session.flush()
     return line_item

@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import AuthDep, SessionDep
+from app.api.deps import HouseholdDep, SessionDep
 from app.schemas import (
     CategoryDeltaOut,
     CategorySpendOut,
@@ -41,13 +41,19 @@ def _resolve_month(year: int | None, month: int | None) -> tuple[int, int]:
 
 @router.get("/monthly", response_model=MonthlyReportOut)
 async def monthly(
-    session: SessionDep, _auth: AuthDep, year: YearQuery = None, month: MonthQuery = None
+    session: SessionDep, household: HouseholdDep, year: YearQuery = None, month: MonthQuery = None
 ) -> MonthlyReportOut:
     resolved_year, resolved_month = _resolve_month(year, month)
-    report = await analytics_service.monthly(session, year=resolved_year, month=resolved_month)
+    report = await analytics_service.monthly(
+        session, household_id=household.id, year=resolved_year, month=resolved_month
+    )
     start, end = analytics_service.month_range(resolved_year, resolved_month)
-    unreviewed = await analytics_service.count_unreviewed(session, start=start, end=end)
-    receipt_count = await analytics_service.count_receipts(session, start=start, end=end)
+    unreviewed = await analytics_service.count_unreviewed(
+        session, household_id=household.id, start=start, end=end
+    )
+    receipt_count = await analytics_service.count_receipts(
+        session, household_id=household.id, start=start, end=end
+    )
 
     return MonthlyReportOut(
         year=report.year,
@@ -90,11 +96,11 @@ async def monthly(
 
 @router.get("/compare", response_model=ComparisonOut)
 async def compare(
-    session: SessionDep, _auth: AuthDep, year: YearQuery = None, month: MonthQuery = None
+    session: SessionDep, household: HouseholdDep, year: YearQuery = None, month: MonthQuery = None
 ) -> ComparisonOut:
     resolved_year, resolved_month = _resolve_month(year, month)
     result = await analytics_service.compare_to_previous(
-        session, year=resolved_year, month=resolved_month
+        session, household_id=household.id, year=resolved_year, month=resolved_month
     )
     return ComparisonOut(
         current_cents=result.current_cents,
@@ -116,7 +122,7 @@ async def compare(
 @router.get("/items", response_model=ItemRankingOut)
 async def items(
     session: SessionDep,
-    _auth: AuthDep,
+    household: HouseholdDep,
     year: YearQuery = None,
     month: MonthQuery = None,
     sort: Literal["frequency", "spend", "unit_price"] = "spend",
@@ -124,7 +130,12 @@ async def items(
 ) -> ItemRankingOut:
     resolved_year, resolved_month = _resolve_month(year, month)
     ranking = await analytics_service.item_ranking(
-        session, year=resolved_year, month=resolved_month, sort=sort, limit=limit
+        session,
+        household_id=household.id,
+        year=resolved_year,
+        month=resolved_month,
+        sort=sort,
+        limit=limit,
     )
     return ItemRankingOut(
         food_total_cents=ranking.food_total_cents,
@@ -149,14 +160,16 @@ async def items(
 @router.get("/price-trend/{item_id}", response_model=PriceTrendOut)
 async def price_trend(
     session: SessionDep,
-    _auth: AuthDep,
+    household: HouseholdDep,
     item_id: int,
     months: Annotated[int, Query(ge=1, le=60)] = 12,
 ) -> PriceTrendOut:
-    item = await analytics_service.get_item(session, item_id)
+    item = await analytics_service.get_item(session, item_id, household_id=household.id)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artikel nicht gefunden.")
-    points = await analytics_service.price_trend(session, item_id=item_id, months=months)
+    points = await analytics_service.price_trend(
+        session, household_id=household.id, item_id=item_id, months=months
+    )
     return PriceTrendOut(
         item_id=item_id,
         name=item.display_name,

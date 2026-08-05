@@ -55,6 +55,13 @@ Ganzzahlige Primärschlüssel ([ADR-008](entscheidungen.md#adr-008)). Beträge a
 
 ```mermaid
 erDiagram
+    HOUSEHOLD ||--o{ MEMBER : "hat"
+    HOUSEHOLD ||--o{ INVITATION : "lädt ein"
+    HOUSEHOLD ||--o{ RECEIPT : "besitzt"
+    HOUSEHOLD ||--o{ ITEM : "besitzt"
+    USER     ||--o{ MEMBER : "ist"
+    USER     ||--o{ OIDC_IDENTITY : "identifiziert über"
+    USER     ||--o{ API_TOKEN : "besitzt"
     RECEIPT  ||--o{ LINE_ITEM : "hat"
     RECEIPT  ||--o{ JOB : "wird extrahiert durch"
     ITEM     ||--o{ LINE_ITEM : "bündelt (über normalized_name)"
@@ -62,8 +69,47 @@ erDiagram
     CATEGORY ||--o{ ITEM : "ordnet ein"
     CATEGORY ||--o{ CATEGORY : "Eltern/Kind"
 
+    HOUSEHOLD {
+        int id PK
+        text name
+    }
+    USER {
+        int id PK
+        text email UK
+        text display_name
+        bool is_active "keine Passwortspalte"
+    }
+    MEMBER {
+        int id PK
+        int household_id FK "ON DELETE CASCADE"
+        int user_id FK "ON DELETE CASCADE"
+        text role "admin|member"
+    }
+    INVITATION {
+        int id PK
+        int household_id FK "ON DELETE CASCADE"
+        text email
+        text role "admin|member"
+        text token_hash "SHA-256"
+        datetime expires_at
+        datetime accepted_at
+    }
+    OIDC_IDENTITY {
+        int id PK
+        int user_id FK "ON DELETE CASCADE"
+        text issuer "UK zusammen mit subject"
+        text subject "der Anker, nicht die Mail"
+    }
+    API_TOKEN {
+        int id PK
+        int user_id FK "ON DELETE CASCADE"
+        text name
+        text token_hash "SHA-256"
+        datetime last_used_at
+    }
     RECEIPT {
         int id PK
+        int household_id FK "Mandantengrenze, ON DELETE CASCADE"
         text status "uploaded|processing|done|needs_review|failed"
         text store_name
         datetime purchased_at "lokale Zeit vom Bon"
@@ -93,7 +139,8 @@ erDiagram
     }
     ITEM {
         int id PK
-        text normalized_name UK
+        int household_id FK "UK zusammen mit normalized_name"
+        text normalized_name
         text display_name
         int category_id FK
     }
@@ -103,6 +150,7 @@ erDiagram
         int parent_id FK "ON DELETE SET NULL"
         int sort_order
         bool is_food "Feld, keine Namensliste"
+        text _hinweis "global, ohne household_id (ADR-012)"
     }
     JOB {
         int id PK
@@ -114,8 +162,14 @@ erDiagram
     }
 ```
 
-`api_tokens` steht daneben (kein Bezug): `name`, `token_hash` (SHA-256),
-`last_used_at`.
+`categories` hängt bewusst **nicht** am Haushalt: die Kategorien sind geteiltes
+Vokabular aus dem Seed, `items` dagegen sind Nutzerinhalt mit Preisverlauf und
+werden getrennt ([ADR-012](entscheidungen.md#adr-012)).
+
+Alle Sammlungen an `Household` und `User` sind mit `passive_deletes=True`
+konfiguriert: löschen erledigt die Datenbank über `ON DELETE CASCADE`. Ohne das
+versuchte die ORM, `receipts.household_id` auf `NULL` zu setzen — die Spalte ist
+`NOT NULL`, und das Löschen scheiterte.
 
 **Fremdschlüssel gelten nur mit `PRAGMA foreign_keys=ON`** — SQLite ignoriert sie
 sonst stillschweigend, und `ON DELETE CASCADE` an `line_items` täte nichts. Das
@@ -227,18 +281,45 @@ Sortierungen.
 ([ADR-007](entscheidungen.md#adr-007)) — nicht aus einer Namensliste im Code, die
 beim Umbenennen einer Kategorie stillschweigend falsch wurde.
 
-## 5. Auth
+## 5. Auth und Mandanten
 
-Eine Stelle erzeugt Identität: `api/deps.require_auth`. Reihenfolge:
+Zwei Fragen, zwei Dependencies — und beide nur an einer Stelle
+([ADR-004](entscheidungen.md#adr-004)):
 
-1. **API-Token** im `Authorization: Bearer`-Header (iOS-Kurzbefehl).
-2. **Session-Cookie** aus dem Passwort-Login (HMAC über `subject|ablauf`,
-   httpOnly, SameSite=Lax).
-3. **Vertrauter Header** vom Reverse Proxy (nur `AUTH_MODE=trusted_header`).
+```mermaid
+flowchart LR
+    A[Anfrage] --> B[require_user<br/>wer bist du?]
+    B --> C[require_household<br/>welche Daten?]
+    C --> D[require_household_admin<br/>darfst du verwalten?]
+    B --> E[Endpoints ohne Mandant<br/>/health, /tokens]
+    C --> F[Bons, Artikel, Auswertungen]
+    D --> G[einladen, umbenennen,<br/>Rollen, löschen]
+```
 
-Der Login ist prozesslokal rate-limitiert; das Passwort wird per
-`hmac.compare_digest` in konstanter Zeit verglichen. Es gibt keine
-`users`-Tabelle ([ADR-004](entscheidungen.md#adr-004)).
+**`require_user`** — Reihenfolge der Verfahren:
+
+1. **API-Token** im `Authorization: Bearer`-Header (iOS-Kurzbefehl). Trägt den
+   Besitzer mit; damit landet ein Kurzbefehl-Upload im richtigen Haushalt, obwohl
+   kein Cookie mitkommt.
+2. **Einzelnutzer-Modi** `password` / `none`: das Session-Cookie (HMAC über
+   `subject|ablauf`, httpOnly, SameSite=Lax) bzw. gar keine Prüfung.
+3. **Vertrauter Header** vom Reverse Proxy (`AUTH_MODE=trusted_header`).
+4. **OIDC-Session-Cookie** (`AUTH_MODE=oidc`), gesetzt vom Callback.
+
+**`require_household`** — der aktive Haushalt kommt aus dem Header
+`X-Household-Id`, sonst aus dem Cookie `eb_household`, sonst ist es die älteste
+Mitgliedschaft. Ist der Anfragende kein Mitglied: **403**. Alles, was einen
+Mandanten hat, filtert danach — und fremde IDs antworten mit **404**, damit die
+API nicht verrät, welche existieren.
+
+Der Login ist prozesslokal rate-limitiert; Passwort und OIDC-`state` werden per
+`hmac.compare_digest` in konstanter Zeit verglichen. `users` hat **keine**
+Passwortspalte: eine Identität entsteht über OIDC, über den Proxy-Header oder als
+technischer Einzelnutzer.
+
+Einladungen sind Token-Links, eingelöst von einem bereits angemeldeten Nutzer
+([ADR-013](entscheidungen.md#adr-013)); der OIDC-Client nutzt Code-Flow plus
+`userinfo` statt JWKS ([ADR-014](entscheidungen.md#adr-014)).
 
 `GET /api/health` ist absichtlich offen, damit der Docker-Healthcheck ihn
 erreicht; er verrät nichts Vertrauliches.

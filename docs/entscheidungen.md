@@ -98,7 +98,7 @@ Tausendstel für Mengen, weil `0,432 kg` exakt sein soll und
 
 ---
 
-## ADR-004 — Ein Passwort statt Identitätssystem {#adr-004}
+## ADR-004 — Vier Anmeldemodi, Haushalt als Mandantengrenze {#adr-004}
 
 **Kontext.** `docs/anforderungen.md` des Altstands nannte Mehrbenutzerbetrieb
 ausdrücklich als **Nicht-Ziel**. Implementiert waren dennoch Gruppen,
@@ -106,32 +106,69 @@ Mitgliedschaften, Rollen, Einladungen per Mail, OIDC-Client, Magic-Links mit
 Browser-Bindung und Pairing-Codes sowie Refresh-Token-Familien mit
 Reuse-Detection: rund 1.500 der 4.790 Backend-Zeilen.
 
-**Entscheidung.** `AUTH_MODE` mit drei Werten:
+Der erste Schnitt dieses Umbaus hat das alles gestrichen und nur `password`,
+`trusted_header` und `none` behalten. Diese Fassung ist die Revision danach: der
+Mehrbenutzerbetrieb ist gewollt — getrennte Daten pro Haushalt, Einladungen,
+OIDC — die *teuren* Teile des Altstands bleiben aber draußen.
 
-| Modus | Verhalten |
-| --- | --- |
-| `password` (Default) | Ein Passwort aus `AUTH_PASSWORD`. Login setzt ein HMAC-signiertes, httpOnly-Session-Cookie. |
-| `trusted_header` | Kein eigener Login. Ein Reverse Proxy (Authelia, Traefik Forward-Auth, authentik) authentifiziert und setzt `AUTH_TRUSTED_HEADER`. |
-| `none` | Kein Auth. Nur für rein lokale Nutzung. |
+**Entscheidung.** Zwei getrennte Achsen: **wer bist du** (`AUTH_MODE`) und
+**welche Daten siehst du** (aktiver Haushalt).
+
+| Modus | Verhalten | Mehrere Menschen? |
+| --- | --- | --- |
+| `password` (Default) | Ein Passwort aus `AUTH_PASSWORD`. Login setzt ein HMAC-signiertes, httpOnly-Session-Cookie und meldet immer denselben technischen Nutzer an. | nein |
+| `oidc` | Authorization-Code-Flow gegen einen Identity Provider (Discovery, `state`-Cookie, `userinfo`). | ja |
+| `trusted_header` | Kein eigener Login. Ein Reverse Proxy (Authelia, Traefik Forward-Auth, authentik) authentifiziert und setzt `AUTH_TRUSTED_HEADER`. | ja |
+| `none` | Kein Auth. Nur für rein lokale Nutzung. | nein |
 
 Dazu API-Tokens (`edb_`-Präfix, nur als SHA-256-Hash gespeichert, einmalig im
 Klartext gezeigt) für den iOS-Kurzbefehl.
 
-**Warum.** Ein Nutzer braucht keine Identitätsverwaltung, sondern einen
-Türriegel. `trusted_header` deckt den SSO-Wunsch in ~20 Zeilen ab, statt mit
-einem eigenen OIDC-Client — und ist die im Homelab übliche Bauform, weil der
-Proxy die Authentifizierung ohnehin schon macht.
+Der **Haushalt** ist die Mandantengrenze: `receipts` und `items` tragen
+`household_id NOT NULL`, jede Abfrage filtert danach. Rollen gibt es zwei,
+`admin` und `member` — mehr wäre für „wer darf einladen und umbenennen“ nicht
+nötig. Auch `password` und `none` bekommen genau einen Haushalt, damit die
+Mandantenprüfung überall dieselbe ist und nicht als Sonderfall existiert.
+
+Was **nicht** zurückkommt: Magic-Links mit Browser-Bindung, Pairing-Codes,
+Refresh-Token-Familien mit Reuse-Detection, eigene Passwortverwaltung. Es gibt
+deshalb keine Passwortspalte an `users`; eine Identität entsteht über OIDC, über
+den Proxy-Header oder als technischer Einzelnutzer.
+
+**Warum.** Getrennte Haushalte sind eine Datenmodell-Frage, keine
+Protokoll-Frage — der teure Teil des Altstands war die selbstgebaute
+Anmeldung, nicht die Mandantentrennung. Die Anmeldung selbst delegieren wir
+darum: an einen Identity Provider (`oidc`) oder an den Proxy
+(`trusted_header`), der im Homelab ohnehin davor steht. Beim OIDC-Client ist
+`subject` der Anker, nicht die Mailadresse — die darf beim Provider wechseln,
+ohne dass jemand seinen Haushalt verliert.
+
+Der aktive Haushalt kommt aus dem Header `X-Household-Id`, sonst aus dem Cookie
+`eb_household`, sonst ist es die älteste Mitgliedschaft. Der Header gewinnt,
+weil nur er synchron ist: sonst träfe die Anfrage direkt nach dem Klick noch den
+alten Haushalt.
 
 **Konsequenzen.**
-- Es gibt keine `users`-Tabelle. Kein Passwort-Reset, kein SMTP.
+- Der Rollencheck hängt an einer Dependency-Kette
+  (`require_user` → `require_household` → `require_household_admin`) und nicht in
+  jedem Handler.
+- Fremde IDs antworten mit **404**, nicht 403 — die API verrät nicht, welche IDs
+  es gibt. Ausnahme: der Wechsel in einen fremden Haushalt gibt 403, denn dass
+  der Haushalt existiert, weiß der Aufrufer dort schon.
 - `trusted_header` ist **nur** hinter einem Proxy sicher, der den Header
   überschreibt. Das steht als Warnung in `.env.example` und im README.
-- Login ist prozesslokal rate-limitiert; das Passwort wird per
+- Login ist prozesslokal rate-limitiert; Passwort und `state` werden per
   `hmac.compare_digest` in konstanter Zeit verglichen.
+- Einladungen und weitere Haushalte sind in `password`/`none` abgeschaltet — in
+  einem Modus, in dem sich ein zweiter Mensch nicht anmelden kann, wäre eine
+  Einladung eine Sackgasse.
+- Der letzte Admin eines Haushalts kann sich nicht selbst herabstufen oder
+  entfernen; sonst bliebe ein Haushalt ohne Verwaltung zurück.
 
 **Zurücknehmen.** `api/deps.py` ist die einzige Stelle, an der eine Identität
-entsteht. Wer Mehrbenutzerbetrieb will, fängt dort an — braucht dann aber
-zusätzlich eine Mandantenspalte an `receipts` und `items`.
+und ein aktiver Haushalt entstehen. Wer zurück auf Einzelbetrieb will, setzt
+`AUTH_MODE=password`: Haushalte, Einladungen und die OIDC-Routen bleiben dann
+ungenutzt im Code, ohne dass etwas ausgebaut werden muss.
 
 ---
 
@@ -302,3 +339,118 @@ braucht.
 
 **Zurücknehmen.** Tailwind ließe sich zusätzlich einführen, ohne die Primitives
 anzutasten — die Tokens wären dann seine Theme-Quelle.
+
+---
+
+## ADR-012 — Kategorien bleiben global, Artikel werden pro Haushalt getrennt {#adr-012}
+
+**Kontext.** Mit dem Haushalt als Mandantengrenze ([ADR-004](#adr-004)) muss für
+jede Tabelle entschieden werden, ob sie geteilt wird oder nicht. Bei `receipts`
+und `line_items` ist die Antwort offensichtlich. Bei den beiden Stammdatentabellen
+`categories` und `items` nicht.
+
+**Entscheidung.**
+
+- `categories` bleibt **global**, ohne `household_id`.
+- `items` wird **pro Haushalt** getrennt, mit
+  `UNIQUE (household_id, normalized_name)`.
+
+**Warum.** Die beiden Tabellen beantworten verschiedene Fragen. „Joghurt & Quark“
+ist überall dasselbe — die Kategorien kommen aus dem Seed, sie sind Vokabular,
+kein Nutzerinhalt. Sie zu vervielfachen brächte identische Zeilen pro Haushalt
+und den Zwang, den Seed bei jedem neuen Haushalt zu wiederholen.
+
+`items` dagegen **ist** Nutzerinhalt: an einem Artikel hängt der Preisverlauf.
+Wären Artikel global, würden zwei Haushalte, die beide „H-Milch 3,5 %“ kaufen,
+sich eine Preiskurve teilen — und damit gegenseitig ihre Einkaufspreise
+offenlegen. Das ist genau das Leck, das die Mandantentrennung verhindern soll;
+`test_tenancy.py::test_same_product_becomes_two_items` prüft es.
+
+**Konsequenzen.**
+- Wer eine Kategorie umbenennt, benennt sie für alle Haushalte um. Bei einem
+  gemeinsam genutzten Vokabular ist das erwartbar, es steht als Hinweis auf der
+  Kategorienseite.
+- Derselbe Artikelname existiert n-mal in `items` — n = Zahl der Haushalte, die
+  ihn gekauft haben. Bei den Datenmengen dieser App belanglos.
+- Die Auswertungen joinen `items` immer über `household_id` mit; ein vergessener
+  Join fällt in den Mandantentests auf, nicht erst im Betrieb.
+
+**Zurücknehmen.** Kategorien pro Haushalt wären eine Migration (Spalte, Backfill
+je Haushalt, `UNIQUE` erweitern) plus der Seed an der Stelle, an der ein Haushalt
+entsteht (`services/users.py`). Der umgekehrte Weg — Artikel global — ist
+bewusst keine Option.
+
+---
+
+## ADR-013 — Einladung per Token-Link, Beitritt nach der Anmeldung {#adr-013}
+
+**Kontext.** Jemanden in einen Haushalt holen heißt: eine Person, die die App
+noch nicht kennt, muss sich anmelden **und** dem richtigen Haushalt zugeordnet
+werden. Der Altstand löste das mit Magic-Links samt Browser-Bindung und
+Pairing-Codes — der aufwendigste Teil des alten Auth-Codes.
+
+**Entscheidung.** Eine Einladung ist eine Zeile in `invitations` mit Mailadresse,
+Rolle, Ablaufdatum und einem Zufallstoken. Der Link
+(`/einladung?token=…`) geht per Mail hinaus; ist kein `SMTP_HOST` gesetzt,
+liefert die API den Link in der Antwort zurück und schreibt ihn ins Log.
+Eingelöst wird er von einem **angemeldeten** Nutzer: erst Anmeldung
+(OIDC/Proxy), dann Beitritt.
+
+**Warum.** Die Reihenfolge „anmelden, dann beitreten“ macht den Link zu einem
+reinen Berechtigungsnachweis und nicht zu einem zweiten Anmeldeverfahren. Damit
+entfällt der ganze Magic-Link-Apparat. Sie löst außerdem ein praktisches Problem:
+der Identity Provider liefert nicht zwangsläufig dieselbe Mailadresse, an die
+eingeladen wurde — der Token ist die Autorisierung, die Adresse nur die
+Zustelladresse.
+
+Der Mailversand läuft über `smtplib` aus der Standardbibliothek in einem Thread.
+Für eine Mail pro Einladung braucht es keine Mail-Bibliothek.
+
+**Konsequenzen.**
+- Wer den Link hat, kann beitreten. Er ist kurzlebig
+  (`INVITATION_TTL_HOURS`, Standard 168) und zurückziehbar.
+- Ohne SMTP verschwindet keine Einladung spurlos — die Oberfläche zeigt den Link
+  zum Weitergeben und sagt, dass keine Mail verschickt wurde.
+- Ein fehlgeschlagener Mailversand lässt die Einladung stehen; sie ist bereits in
+  der Datenbank, wenn die Mail rausgeht.
+
+**Zurücknehmen.** Die Einladung ist auf `services/households.py` und eine
+Tabelle begrenzt. Wer stattdessen Provider-Gruppen abbilden will, ersetzt
+`accept_invitation` durch eine Zuordnung aus dem OIDC-Claim.
+
+---
+
+## ADR-014 — OIDC ohne JWKS: Code-Flow plus `userinfo` {#adr-014}
+
+**Kontext.** Ein OIDC-Client kann die Identität auf zwei Wegen bekommen: das
+`id_token` selbst prüfen (Signatur über JWKS, Schlüsselrotation, Clock Skew,
+`aud`/`iss`/`nonce`-Prüfung) oder den Access-Token gegen den
+`userinfo`-Endpoint einlösen.
+
+**Entscheidung.** Confidential Client mit Authorization-Code-Flow über
+`httpx`; die Identität kommt aus `userinfo`. Das `id_token` wird nicht
+kryptografisch geprüft. Discovery
+(`/.well-known/openid-configuration`) wird pro Prozess einmal geholt und
+gecacht. `state` liegt in einem kurzlebigen httpOnly-Cookie und wird im Callback
+in konstanter Zeit verglichen.
+
+**Warum.** Der Token-Tausch läuft über TLS direkt gegen den Provider, mit
+Client-Secret — der Kanal ist authentifiziert, und `userinfo` liefert dieselbe
+Identität. Die JWKS-Variante würde `python-jose`/`authlib` samt
+Krypto-Abhängigkeit und Schlüsselrotation dazuholen, um denselben Anker
+(`subject`) zu bekommen. Für eine Selbsthosting-App ist das Aufwand ohne
+Sicherheitsgewinn.
+
+**Konsequenzen.**
+- Ein zusätzlicher HTTP-Aufruf pro Anmeldung (`userinfo`). Bei einer Anmeldung
+  pro Sitzung irrelevant.
+- Kein `nonce`-Replay-Schutz auf dem `id_token` — der wird nicht ausgewertet.
+  Gegen untergeschobene Callbacks schützt der `state`-Vergleich.
+- Fehler des Providers landen als Umleitung auf `/login?sso_error=…`; ein Browser
+  sieht nie eine JSON-Fehlerseite.
+- `OIDC_ISSUER`, `OIDC_CLIENT_ID` und `OIDC_CLIENT_SECRET` sind Pflicht, sonst
+  antwortet `/api/auth/oidc/login` mit 503 statt einer halben Umleitung.
+
+**Zurücknehmen.** `integrations/oidc.py` ist die einzige Stelle mit
+Provider-Wissen und über `set_oidc_client()` austauschbar — die Tests nutzen
+genau diesen Haken. Wer das `id_token` prüfen will, ersetzt `exchange()`.

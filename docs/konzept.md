@@ -6,16 +6,19 @@ Quelle der Wahrheit für das *Was* und *Warum*. Scope-Änderungen hier pflegen.
 
 > **Bon abfotografieren → sehen, wo das Geld hingeht und was teurer wird.**
 
-Ein Haushalt, ein Server, ein Container. Alles, was diesem Satz nicht dient,
-ist raus.
+Ein Server, ein Container. Ein Haushalt ist der Regelfall, mehrere sind
+möglich — alles, was diesem Satz nicht dient, ist raus.
 
 ## Leitprinzipien
 
 1. **Die Analyse ist das Produkt, der Scan ist Zulieferung.** Wo Aufwand
    investiert wird, entscheidet dieser Satz. Der Scan muss zuverlässig sein,
    die Analyse muss *gut aussehen und Erkenntnisse liefern*.
-2. **Betriebsgröße ernst nehmen.** Ein Haushalt, ein Nutzer, ~50 Bons im Monat.
-   Das ist keine verteilte Anwendung. Ein Prozess, eine Datei, ein Container.
+2. **Betriebsgröße ernst nehmen.** Ein Haushalt, wenige Menschen, ~50 Bons im
+   Monat. Das ist keine verteilte Anwendung. Ein Prozess, eine Datei, ein
+   Container — auch mit mehreren Nutzern.
+   Mehrbenutzerbetrieb heißt hier: getrennte Daten und delegierte Anmeldung,
+   kein selbstgebautes Identitätssystem.
 3. **Ein Fehler darf niemals eine Seite leeren.** Jedes Widget lädt und scheitert
    für sich.
 4. **Geld ist nie eine Fließkommazahl und nie ein String.** Ganzzahlige Cent
@@ -58,12 +61,23 @@ ist raus.
 - `is_food` ist ein **Feld** an der Kategorie, keine Namensliste im Code.
 - API-Tokens anlegen und widerrufen.
 
+### Zusammen wirtschaften
+- **Haushalt** als Datengrenze: Bons, Artikel und Auswertungen gehören einem
+  Haushalt, nicht einer Person. Wer ihn verlässt, nimmt die Bons nicht mit.
+- **Mitglieder** mit zwei Rollen: `admin` darf einladen, umbenennen, entfernen;
+  `member` erfasst und liest.
+- **Einladung** per Link mit Ablaufdatum, per Mail oder zum Weitergeben.
+- **Mehrere Haushalte** pro Person, umschaltbar — z. B. privat und WG.
+- **Anmeldung** über Single Sign-on (OIDC) oder den Reverse Proxy; im
+  Einzelbetrieb bleibt es ein Passwort ([ADR-004](entscheidungen.md#adr-004)).
+
 ## Nicht-Ziele (bewusst und begründet)
 
 | Nicht-Ziel | Begründung |
 | --- | --- |
-| Mehrbenutzer, Gruppen, Einladungen, Rollen | Ein Haushalt. War im Altstand ein Drittel des Backends für ein Feature, das die Anforderungen ausdrücklich ausschließen. |
-| OIDC-Client, Magic-Links, SMTP | Ein Nutzer braucht kein Identitätssystem. Wer SSO will, stellt Authelia als Forward-Auth davor — dafür gibt es `AUTH_MODE=trusted_header` (siehe [ADR-004](entscheidungen.md#adr-004)). |
+| Eigene Passwortverwaltung, Passwort-Reset | Die Anmeldung von mehreren Menschen delegieren wir an einen Identity Provider oder den Reverse Proxy. `users` hat deshalb keine Passwortspalte ([ADR-004](entscheidungen.md#adr-004)). |
+| Magic-Links mit Browser-Bindung, Pairing-Codes, Refresh-Token-Familien | Der aufwendigste Teil des Altstands. Eine Einladung ist ein kurzlebiger Token-Link, eingelöst von einem bereits angemeldeten Nutzer ([ADR-013](entscheidungen.md#adr-013)). |
+| `id_token`-Prüfung über JWKS | Der Token-Tausch läuft über TLS mit Client-Secret; die Identität kommt aus `userinfo`. Spart eine Krypto-Abhängigkeit und Schlüsselrotation ([ADR-014](entscheidungen.md#adr-014)). |
 | Redis, ARQ, separater Worker | Bei ~50 Bons/Monat reicht eine DB-gestützte Queue im selben Prozess ([ADR-002](entscheidungen.md#adr-002)). |
 | Postgres | Ein Schreiber, wenige MB Daten. SQLite im WAL-Modus ist hier die robustere Wahl, weil Backup = eine Datei kopieren ([ADR-001](entscheidungen.md#adr-001)). |
 | Deploy-Webhook, docker-socket-proxy | 300 Zeilen Infrastruktur, die `docker compose pull && up -d` ersetzen. Nicht das Problem dieser App. |

@@ -40,7 +40,7 @@ def previous_month(year: int, month: int) -> tuple[int, int]:
     return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
-def _record_query() -> sa.Select[tuple[object, ...]]:
+def _record_query(household_id: int) -> sa.Select[tuple[object, ...]]:
     return (
         sa.select(
             LineItem.receipt_id,
@@ -59,18 +59,21 @@ def _record_query() -> sa.Select[tuple[object, ...]]:
         )
         .join(Receipt, LineItem.receipt_id == Receipt.id)
         .outerjoin(Category, LineItem.category_id == Category.id)
-        .where(Receipt.status.in_(ANALYZED_STATUSES))
+        .where(Receipt.household_id == household_id, Receipt.status.in_(ANALYZED_STATUSES))
     )
 
 
 async def fetch_records(
     session: AsyncSession,
     *,
+    household_id: int,
     start: datetime,
     end: datetime,
     item_id: int | None = None,
 ) -> list[agg.PurchaseRecord]:
-    query = _record_query().where(effective_date() >= start, effective_date() < end)
+    query = _record_query(household_id).where(
+        effective_date() >= start, effective_date() < end
+    )
     if item_id is not None:
         query = query.where(LineItem.item_id == item_id)
 
@@ -97,7 +100,9 @@ async def fetch_records(
     ]
 
 
-async def count_receipts(session: AsyncSession, *, start: datetime, end: datetime) -> int:
+async def count_receipts(
+    session: AsyncSession, *, household_id: int, start: datetime, end: datetime
+) -> int:
     """Bons im Zeitraum — auch solche ohne erkannte Positionen.
 
     Die Aggregation zählt nur Bons, die Positionen beigesteuert haben; für die
@@ -106,6 +111,7 @@ async def count_receipts(session: AsyncSession, *, start: datetime, end: datetim
     return (
         await session.execute(
             sa.select(sa.func.count(Receipt.id)).where(
+                Receipt.household_id == household_id,
                 Receipt.status.in_(ANALYZED_STATUSES),
                 effective_date() >= start,
                 effective_date() < end,
@@ -114,10 +120,13 @@ async def count_receipts(session: AsyncSession, *, start: datetime, end: datetim
     ).scalar_one()
 
 
-async def count_unreviewed(session: AsyncSession, *, start: datetime, end: datetime) -> int:
+async def count_unreviewed(
+    session: AsyncSession, *, household_id: int, start: datetime, end: datetime
+) -> int:
     return (
         await session.execute(
             sa.select(sa.func.count(Receipt.id)).where(
+                Receipt.household_id == household_id,
                 Receipt.status == ReceiptStatus.NEEDS_REVIEW.value,
                 effective_date() >= start,
                 effective_date() < end,
@@ -126,32 +135,42 @@ async def count_unreviewed(session: AsyncSession, *, start: datetime, end: datet
     ).scalar_one()
 
 
-async def monthly(session: AsyncSession, *, year: int, month: int) -> agg.MonthlyReport:
+async def monthly(
+    session: AsyncSession, *, household_id: int, year: int, month: int
+) -> agg.MonthlyReport:
     start, end = month_range(year, month)
-    records = await fetch_records(session, start=start, end=end)
+    records = await fetch_records(session, household_id=household_id, start=start, end=end)
     return agg.monthly_report(records, year=year, month=month)
 
 
-async def compare_to_previous(session: AsyncSession, *, year: int, month: int) -> agg.Comparison:
+async def compare_to_previous(
+    session: AsyncSession, *, household_id: int, year: int, month: int
+) -> agg.Comparison:
     start, end = month_range(year, month)
     prev_year, prev_month = previous_month(year, month)
     prev_start, prev_end = month_range(prev_year, prev_month)
     return agg.compare(
-        await fetch_records(session, start=start, end=end),
-        await fetch_records(session, start=prev_start, end=prev_end),
+        await fetch_records(session, household_id=household_id, start=start, end=end),
+        await fetch_records(session, household_id=household_id, start=prev_start, end=prev_end),
     )
 
 
 async def item_ranking(
-    session: AsyncSession, *, year: int, month: int, sort: agg.SortKey, limit: int
+    session: AsyncSession,
+    *,
+    household_id: int,
+    year: int,
+    month: int,
+    sort: agg.SortKey,
+    limit: int,
 ) -> agg.ItemRanking:
     start, end = month_range(year, month)
-    records = await fetch_records(session, start=start, end=end)
+    records = await fetch_records(session, household_id=household_id, start=start, end=end)
     return agg.rank_items(records, sort=sort, limit=limit)
 
 
 async def price_trend(
-    session: AsyncSession, *, item_id: int, months: int = 12
+    session: AsyncSession, *, household_id: int, item_id: int, months: int = 12
 ) -> list[agg.TrendPoint]:
     """Preisverlauf über die letzten `months` Monate — der Zeitraum ist hier
     absichtlich länger als ein Monat, weil ein Trend genau das braucht."""
@@ -162,9 +181,17 @@ async def price_trend(
         year, month = previous_month(year, month)
     start, _ = month_range(year, month)
 
-    records = await fetch_records(session, start=start, end=end, item_id=item_id)
+    records = await fetch_records(
+        session, household_id=household_id, start=start, end=end, item_id=item_id
+    )
     return agg.price_trend(records)
 
 
-async def get_item(session: AsyncSession, item_id: int) -> Item | None:
-    return await session.get(Item, item_id)
+async def get_item(session: AsyncSession, item_id: int, *, household_id: int) -> Item | None:
+    """Artikel nur innerhalb des Haushalts — sonst wäre `/price-trend/{item_id}`
+    ein Weg, fremde Preisverläufe zu lesen."""
+    return (
+        await session.execute(
+            sa.select(Item).where(Item.id == item_id, Item.household_id == household_id)
+        )
+    ).scalar_one_or_none()

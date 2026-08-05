@@ -90,7 +90,9 @@ async def _persist(
         )
         session.add(line_item)
         await session.flush()
-        await items_service.apply_product_mapping(session, line_item)
+        await items_service.apply_product_mapping(
+            session, line_item, household_id=receipt.household_id
+        )
 
     return len(parsed.items)
 
@@ -174,6 +176,7 @@ async def process_receipt(
             "extraction.done",
             extra={
                 "receipt_id": receipt.id,
+                "household_id": receipt.household_id,
                 "items": count,
                 "via": via,
                 "status": receipt.status,

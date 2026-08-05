@@ -12,12 +12,27 @@ async def test_session_is_anonymous_before_login(anon_client: httpx.AsyncClient)
     response = await anon_client.get("/api/auth/session")
     assert response.status_code == 200
     body = response.json()
-    assert body == {"authenticated": False, "auth_mode": "password", "login_required": True}
+    assert body["authenticated"] is False
+    assert body["auth_mode"] == "password"
+    assert body["login_required"] is True
+    assert body["multi_user"] is False
+    assert body["user"] is None
 
 
 async def test_login_with_wrong_password_is_rejected(anon_client: httpx.AsyncClient) -> None:
     response = await anon_client.post("/api/auth/login", json={"password": "falsch"})
     assert response.status_code == 401
+
+
+async def test_session_reports_household_after_login(client: httpx.AsyncClient) -> None:
+    """Auch im Einzelnutzer-Modus gibt es einen Haushalt — sonst hätte die
+    Mandantenprüfung nichts, woran sie hängen kann."""
+    body = (await client.get("/api/auth/session")).json()
+    assert body["authenticated"] is True
+    assert body["user"]["email"] == "haushalt@localhost"
+    assert len(body["user"]["memberships"]) == 1
+    assert body["user"]["memberships"][0]["role"] == "admin"
+    assert body["active_household_id"] == body["user"]["memberships"][0]["household_id"]
 
 
 async def test_login_sets_httponly_cookie(anon_client: httpx.AsyncClient) -> None:
@@ -62,4 +77,5 @@ async def test_health_is_reachable_without_auth(anon_client: httpx.AsyncClient) 
     body = response.json()
     assert body["status"] == "ok"
     assert body["auth_mode"] == "password"
+    assert body["multi_user"] is False
     assert body["llm_ready"] is False  # LLM_PROVIDER=none im Test

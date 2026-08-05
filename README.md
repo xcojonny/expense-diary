@@ -1,11 +1,13 @@
 # Haushaltsbuch
 
-Selbst gehostetes Haushaltsbuch für **einen** Haushalt: Kassenbon fotografieren,
-Positionen automatisch erfassen, sehen wo das Geld hingeht — und **was teurer
-wird**.
+Selbst gehostetes Haushaltsbuch: Kassenbon fotografieren, Positionen automatisch
+erfassen, sehen wo das Geld hingeht — und **was teurer wird**.
 
 * **Ein Container.** API und Web-Oberfläche in einem Prozess, SQLite als
   Datenbank. Kein Postgres, kein Redis, kein separater Worker.
+* **Allein oder gemeinsam.** Ein Passwort für den eigenen Haushalt — oder Single
+  Sign-on bzw. Reverse-Proxy-Anmeldung mit mehreren Menschen, getrennten
+  Haushalten und Einladungen.
 * **Läuft ohne KI-Modell.** Digitale eBon-PDFs (REWE, Lidl, Kaufland …) liest ein
   eingebauter Parser. Ein Vision-Modell ist optional und nur für Fotos nötig.
 * **Preisverläufe pro Artikel.** „H-Milch 3,5 %“ und „H MILCH 3.5“ sind derselbe
@@ -38,6 +40,7 @@ Kopie dieses Ordners.
 | **Korrigieren** | Kopfdaten und Positionen editierbar, Originalbeleg daneben, Summenabweichung wird angezeigt. |
 | **Auswerten** | Monatsausgaben, Kategorien, Märkte, Artikel nach Ausgabe/Häufigkeit/Stückpreis, Anteil am Lebensmittelbudget, Preisverlauf, Vormonatsvergleich. |
 | **Verwalten** | Kategorien hierarchisch pflegen (inkl. „zählt als Lebensmittel“), API-Tokens. |
+| **Teilen** | Haushalte mit Mitgliedern und zwei Rollen, Einladung per Link, Wechsel zwischen mehreren Haushalten (in `oidc`/`trusted_header`). |
 
 Ausführlich: [`docs/konzept.md`](docs/konzept.md).
 
@@ -47,11 +50,19 @@ Alles über `.env` (Vorlage: [`.env.example`](.env.example)).
 
 | Variable | Default | Bedeutung |
 | --- | --- | --- |
-| `AUTH_MODE` | `password` | `password`, `trusted_header` oder `none` — siehe unten |
+| `AUTH_MODE` | `password` | `password`, `oidc`, `trusted_header` oder `none` — siehe unten |
 | `AUTH_PASSWORD` | – | Passwort bei `AUTH_MODE=password` |
 | `SECRET_KEY` | zufällig | Signiert das Session-Cookie. Ohne Wert sind Sessions nach einem Neustart ungültig |
 | `COOKIE_SECURE` | `false` | `true`, sobald HTTPS davor steht |
+| `BASE_URL` | `http://localhost:8000` | Öffentliche Adresse — für OIDC-Redirect und Einladungslinks |
 | `AUTH_TRUSTED_HEADER` | `Remote-User` | Header, den der Proxy setzt (nur `trusted_header`) |
+| `AUTH_TRUSTED_EMAIL_HEADER` | `Remote-Email` | Optional, für einen sprechenden Namen |
+| `OIDC_ISSUER` | – | Pflicht bei `AUTH_MODE=oidc` |
+| `OIDC_CLIENT_ID` | – | Pflicht bei `AUTH_MODE=oidc` |
+| `OIDC_CLIENT_SECRET` | – | Pflicht bei `AUTH_MODE=oidc` |
+| `OIDC_SCOPES` | `openid email profile` | Scopes für den Autorisierungsaufruf |
+| `SMTP_HOST` | – | Ohne Wert: Einladungslink wird angezeigt statt gemailt |
+| `INVITATION_TTL_HOURS` | `168` | Gültigkeit einer Einladung (7 Tage) |
 | `DATA_DIR` | `./data` | SQLite-Datei und Belege |
 | `LLM_PROVIDER` | `none` | `none`, `openai`, `openrouter`, `ollama` |
 | `LLM_MODEL` | – | z. B. `gpt-4o-mini`, `qwen2.5vl:7b` |
@@ -64,16 +75,43 @@ Alles über `.env` (Vorlage: [`.env.example`](.env.example)).
 
 ### Anmeldung
 
-Drei Modi ([ADR-004](docs/entscheidungen.md#adr-004)):
+Vier Modi ([ADR-004](docs/entscheidungen.md#adr-004)). Zwei davon können mehrere
+Menschen abbilden:
 
-* **`password`** (Default) — ein Passwort für den Haushalt, Session als
-  httpOnly-Cookie. Der Login ist rate-limitiert.
+| Modus | Anmeldung | Mehrere Nutzer & Haushalte |
+| --- | --- | --- |
+| `password` (Default) | ein Passwort für den Haushalt | nein |
+| `oidc` | Single Sign-on beim Identity Provider | **ja** |
+| `trusted_header` | ein Reverse Proxy davor | **ja** |
+| `none` | keine | nein |
+
+* **`password`** — ein Passwort für den Haushalt, Session als httpOnly-Cookie.
+  Der Login ist rate-limitiert.
+* **`oidc`** — Authorization-Code-Flow gegen einen Identity Provider (authentik,
+  Keycloak, Authelia, Zitadel …). `OIDC_ISSUER`, `OIDC_CLIENT_ID` und
+  `OIDC_CLIENT_SECRET` sind Pflicht; beim Provider wird
+  `<BASE_URL>/api/auth/oidc/callback` als Redirect-URI eingetragen. Wer sich neu
+  anmeldet, bekommt einen eigenen Haushalt.
 * **`trusted_header`** — kein eigener Login: ein Reverse Proxy (Authelia,
   authentik, Traefik Forward-Auth) authentifiziert und setzt
   `AUTH_TRUSTED_HEADER`.
   > **Nur sicher, wenn der Proxy diesen Header überschreibt.** Tut er es nicht,
   > kann jeder Client ihn selbst mitschicken und ist damit angemeldet.
 * **`none`** — kein Schutz. Nur für eine rein lokale Instanz.
+
+### Haushalte teilen
+
+In `oidc` und `trusted_header` ist der **Haushalt** die Datengrenze: Bons,
+Artikel und Auswertungen gehören ihm, nicht einer Person.
+
+1. Unter **Haushalt** eine Mailadresse einladen (Rolle `admin` oder `member`).
+2. Ist `SMTP_HOST` gesetzt, geht eine Mail raus; sonst zeigt die Oberfläche den
+   Link zum Weitergeben.
+3. Die eingeladene Person meldet sich an und öffnet den Link — fertig.
+
+Eine Person kann in mehreren Haushalten sein (privat, WG) und oben links
+umschalten. `admin` darf einladen, umbenennen, Rollen ändern und löschen; der
+letzte Admin eines Haushalts kann sich nicht selbst herausnehmen.
 
 ### Texterkennung
 

@@ -7,6 +7,8 @@
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { useSession } from '@/stores/session'
+
 export const router = createRouter({
   history: createWebHistory(),
   scrollBehavior: (_to, _from, saved) => saved ?? { top: 0 },
@@ -48,10 +50,34 @@ export const router = createRouter({
       meta: { title: 'Kategorien' },
     },
     {
+      path: '/haushalt',
+      name: 'household',
+      component: () => import('@/pages/HouseholdPage.vue'),
+      meta: { title: 'Haushalt' },
+    },
+    {
+      path: '/einladung',
+      name: 'invitation',
+      component: () => import('@/pages/InvitationPage.vue'),
+      meta: { title: 'Einladung' },
+    },
+    {
       path: '/einstellungen',
       name: 'settings',
       component: () => import('@/pages/SettingsPage.vue'),
       meta: { title: 'Einstellungen' },
+    },
+    {
+      /**
+       * Der OIDC-Callback leitet Fehler nach `/login?sso_error=…` — der Pfad
+       * muss also existieren, sonst landet ein gescheiterter SSO-Versuch auf
+       * „Nicht gefunden". Angemeldet gibt es hier nichts zu holen.
+       */
+      path: '/login',
+      name: 'login',
+      component: () => import('@/pages/LoginPage.vue'),
+      meta: { title: 'Anmelden' },
+      beforeEnter: () => (useSession().authenticated.value ? '/' : true),
     },
     {
       path: '/:pathMatch(.*)*',

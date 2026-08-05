@@ -8,20 +8,69 @@
 export type ReceiptStatus = 'uploaded' | 'processing' | 'done' | 'needs_review' | 'failed'
 export type LineKind = 'product' | 'deposit' | 'discount'
 export type ItemSort = 'frequency' | 'spend' | 'unit_price'
-export type AuthMode = 'password' | 'trusted_header' | 'none'
+export type AuthMode = 'password' | 'oidc' | 'trusted_header' | 'none'
+export type Role = 'admin' | 'member'
+
+export interface Membership {
+  household_id: number
+  household_name: string
+  role: Role
+}
+
+export interface CurrentUser {
+  id: number
+  email: string
+  display_name: string
+  memberships: Membership[]
+}
 
 export interface SessionInfo {
   authenticated: boolean
   auth_mode: AuthMode
   login_required: boolean
+  /** Nur in `oidc`/`trusted_header` gibt es mehrere Menschen und Einladungen. */
+  multi_user: boolean
+  /** SSO-Knopf nur zeigen, wenn OIDC vollständig konfiguriert ist. */
+  sso_available: boolean
+  user: CurrentUser | null
+  active_household_id: number | null
+}
+
+export interface Household {
+  id: number
+  name: string
+}
+
+export interface Member {
+  id: number
+  user_id: number
+  email: string
+  display_name: string
+  role: Role
+}
+
+export interface Invitation {
+  id: number
+  email: string
+  role: Role
+  expires_at: string
+  created_at: string
+}
+
+export interface InvitationCreated {
+  invitation: Invitation
+  link: string
+  mail_sent: boolean
 }
 
 export interface Health {
   status: string
   version: string
   auth_mode: AuthMode
+  multi_user: boolean
   llm_provider: string
   llm_ready: boolean
+  mail_ready: boolean
   queued_jobs: number
 }
 

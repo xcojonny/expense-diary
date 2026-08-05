@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.household import Household
     from app.models.line_item import LineItem
 
 
@@ -42,6 +43,10 @@ class Receipt(Base, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Mandantengrenze (ADR-004). Jede Abfrage auf Bons filtert danach.
+    household_id: Mapped[int] = mapped_column(
+        sa.ForeignKey("households.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     status: Mapped[str] = mapped_column(
         sa.String(20), default=ReceiptStatus.UPLOADED.value, nullable=False, index=True
     )
@@ -60,6 +65,8 @@ class Receipt(Base, TimestampMixin):
     raw_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     confidence: Mapped[str | None] = mapped_column(sa.String(10), nullable=True)
     error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+
+    household: Mapped[Household] = relationship(back_populates="receipts")
 
     line_items: Mapped[list[LineItem]] = relationship(
         back_populates="receipt",

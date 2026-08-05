@@ -27,7 +27,7 @@ import UiInput from '@/ui/UiInput.vue'
 import UiModal from '@/ui/UiModal.vue'
 import UiSegmented from '@/ui/UiSegmented.vue'
 
-const { health, refreshHealth, logout, loginRequired, authMode } = useSession()
+const { health, refreshHealth, logout, canLogout, user, multiUser } = useSession()
 
 const tokens = useResource(() => api.get<ApiToken[]>('/tokens'))
 
@@ -44,7 +44,8 @@ const THEME_SEGMENTS = [
 ]
 
 const AUTH_LABELS: Record<string, string> = {
-  password: 'Passwort',
+  password: 'Passwort (ein Haushalt)',
+  oidc: 'Single Sign-on (OIDC)',
   trusted_header: 'Reverse Proxy (vertrauter Header)',
   none: 'Kein Schutz',
 }
@@ -139,6 +140,14 @@ async function revoke(): Promise<void> {
               </UiBadge>
             </dd>
           </div>
+          <div v-if="multiUser" class="fact">
+            <dt>Einladungsmails</dt>
+            <dd>
+              <UiBadge :tone="health.mail_ready ? 'success' : 'neutral'">
+                {{ health.mail_ready ? 'SMTP aktiv' : 'nur Link' }}
+              </UiBadge>
+            </dd>
+          </div>
         </dl>
         <p v-else class="subtle">Zustand nicht abrufbar.</p>
 
@@ -205,7 +214,7 @@ async function revoke(): Promise<void> {
       </UiCard>
 
       <!-- Sitzung -->
-      <UiCard v-if="loginRequired && authMode === 'password'" title="Sitzung">
+      <UiCard v-if="canLogout" title="Sitzung" :hint="user ? user.email : undefined">
         <UiButton variant="secondary" icon="logout" @click="logout">Abmelden</UiButton>
       </UiCard>
     </div>

@@ -8,6 +8,28 @@
 
 const BASE = '/api'
 
+/** Header, mit dem der Server den Mandanten bestimmt (siehe `api/deps.py`). */
+const HOUSEHOLD_HEADER = 'X-Household-Id'
+
+/**
+ * Aktiver Haushalt.
+ *
+ * Der Server merkt sich die Auswahl zwar in einem Cookie, aber der Header
+ * gewinnt — und nur der Header ist synchron. Beim Wechsel würde sonst die
+ * Anfrage, die direkt nach dem Klick startet, noch den alten Haushalt treffen.
+ * Der Wert liegt hier statt im Session-Store, damit `api` nichts importieren
+ * muss (sonst hätten die beiden Module einen Zyklus).
+ */
+let activeHousehold: number | null = null
+
+export function setActiveHousehold(id: number | null): void {
+  activeHousehold = id
+}
+
+function householdHeaders(): Record<string, string> {
+  return activeHousehold === null ? {} : { [HOUSEHOLD_HEADER]: String(activeHousehold) }
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -63,11 +85,11 @@ async function extractMessage(response: Response): Promise<string> {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, query, silentUnauthorized } = options
 
-  const init: RequestInit = { method, credentials: 'same-origin', headers: {} }
+  const init: RequestInit = { method, credentials: 'same-origin', headers: householdHeaders() }
   if (body instanceof FormData) {
     init.body = body // Content-Type setzt der Browser samt boundary
   } else if (body !== undefined) {
-    init.headers = { 'Content-Type': 'application/json' }
+    init.headers = { ...householdHeaders(), 'Content-Type': 'application/json' }
     init.body = JSON.stringify(body)
   }
 
@@ -108,6 +130,7 @@ export const api = {
 export async function fetchReceiptFile(receiptId: number): Promise<{ url: string; type: string }> {
   const response = await fetch(`${BASE}/receipts/${receiptId}/file`, {
     credentials: 'same-origin',
+    headers: householdHeaders(),
   })
   if (!response.ok) {
     throw new ApiError(response.status, 'Beleg konnte nicht geladen werden.')
