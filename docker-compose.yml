@@ -1,0 +1,44 @@
+# Ein Dienst, ein Volume (ADR-006).
+#
+# Deploy:  docker compose pull && docker compose up -d
+# Backup:  den Inhalt von ./data kopieren — darin liegen die SQLite-Datei und
+#          alle Belege. Bei laufendem Container reicht
+#          `docker compose exec app sqlite3 /data/haushalt.db ".backup /data/backup.db"`,
+#          sonst genügt `cp -r data data-backup`.
+
+services:
+  app:
+    # Lokal bauen: docker compose up -d --build
+    # Aus der Registry: IMAGE=ghcr.io/<owner>/expense-diary:latest docker compose up -d
+    image: ${IMAGE:-expense-diary:local}
+    build:
+      context: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      # Hinter einem Reverse Proxy besser auf 127.0.0.1 binden:
+      #   - "127.0.0.1:8000:8000"
+      - "${HOST_PORT:-8000}:8000"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# --- Betrieb hinter Traefik ---------------------------------------------------
+# Es gibt nur einen Dienst, also auch nur eine Route — kein Pfad-Splitting
+# zwischen API und Frontend nötig. Beispiel:
+#
+#   labels:
+#     - traefik.enable=true
+#     - traefik.http.routers.haushalt.rule=Host(`haushalt.example.org`)
+#     - traefik.http.routers.haushalt.tls.certresolver=le
+#     - traefik.http.services.haushalt.loadbalancer.server.port=8000
+#   networks: [proxy]
+#
+# Mit AUTH_MODE=trusted_header muss der Proxy AUTH_TRUSTED_HEADER setzen UND
+# überschreiben — sonst kann ihn jeder Client selbst mitschicken.

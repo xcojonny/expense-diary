@@ -1,0 +1,197 @@
+/*
+ * Design-Tokens — die EINZIGE Datei mit Farbwerten.
+ *
+ * Regel: keine Komponente schreibt einen Hex-Wert. Wer eine Farbe braucht,
+ * nimmt ein Token. Genau daran fehlte es im Altstand, wo `bg-green-600` und
+ * `text-gray-500` über elf Seiten verstreut waren.
+ *
+ * Dark Mode kommt aus derselben Quelle: die Tokens werden umgeschrieben, die
+ * Komponenten bleiben unangetastet.
+ *
+ * ACHTUNG — drei Stellen können keine CSS-Variablen lesen und tragen dieselben
+ * Werte doppelt. Wer hier eine Farbe ändert, prüft sie mit:
+ *   - index.html            <meta name="theme-color"> (hell/dunkel)
+ *   - vite.config.ts        PWA-Manifest (theme_color, background_color)
+ *   - public/favicon.svg    Akzentfarbe des Symbols
+ */
+
+:root {
+  /* --- Flächen --------------------------------------------------------- */
+  --bg: #f4f6f5;
+  --surface: #ffffff;
+  --surface-muted: #eef1f0;
+  --surface-hover: #e7ebe9;
+  --border: #e0e5e3;
+  --border-strong: #c6cecb;
+
+  /* --- Text ------------------------------------------------------------ */
+  --text: #16211d;
+  --text-muted: #5c6a64;
+  --text-subtle: #87938d;
+  --text-inverse: #ffffff;
+
+  /* --- Akzent ---------------------------------------------------------- */
+  --accent: #0f8a6a;
+  --accent-hover: #0b7157;
+  --accent-fg: #ffffff;
+  --accent-soft: #e2f3ed;
+  --accent-ring: rgba(15 138 106 / 35%);
+
+  /* --- Semantik -------------------------------------------------------- */
+  --warn: #a8680a;
+  --warn-soft: #fbf1de;
+  --danger: #b93a2c;
+  --danger-soft: #fbeae8;
+  --info: #2a6f9e;
+  --info-soft: #e6f0f7;
+  --success: #0f8a6a;
+  --success-soft: #e2f3ed;
+
+  /* Ausgabenrichtung: mehr = warnend, weniger = gut. Nie „rot/grün" direkt
+     ansprechen, sonst kippt die Bedeutung beim nächsten Kontext. */
+  --trend-up: #b93a2c;
+  --trend-down: #0f8a6a;
+
+  /* --- Diagramme (ADR-009) --------------------------------------------- */
+  --chart-1: #0f8a6a;
+  --chart-2: #2a6f9e;
+  --chart-3: #a8680a;
+  --chart-4: #7a52b3;
+  --chart-5: #b93a2c;
+  --chart-6: #0d7f86;
+  --chart-7: #97821c;
+  --chart-8: #6b7a85;
+  --chart-grid: #e0e5e3;
+  --chart-axis: #87938d;
+
+  /* --- Form ------------------------------------------------------------ */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --radius-full: 999px;
+
+  --overlay: rgb(8 14 12 / 52%);
+
+  --shadow-sm: 0 1px 2px rgb(16 33 29 / 6%);
+  --shadow: 0 2px 8px rgb(16 33 29 / 7%), 0 1px 2px rgb(16 33 29 / 4%);
+  --shadow-lg: 0 12px 32px rgb(16 33 29 / 14%);
+
+  /* --- Maße ------------------------------------------------------------ */
+  --sidebar-width: 232px;
+  --bottom-nav-height: 60px;
+  --content-max: 1240px;
+
+  /* --- Schrift --------------------------------------------------------- */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+
+  --transition: 140ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  color-scheme: light;
+}
+
+/* Systemvorgabe … */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0e1311;
+    --surface: #161c19;
+    --surface-muted: #1d2521;
+    --surface-hover: #25302b;
+    --border: #29332e;
+    --border-strong: #3b4741;
+
+    --text: #e7eeea;
+    --text-muted: #9aa8a1;
+    --text-subtle: #6f7d76;
+    --text-inverse: #0e1311;
+
+    --accent: #2ebd94;
+    --accent-hover: #46cda6;
+    --accent-fg: #052019;
+    --accent-soft: #14312a;
+    --accent-ring: rgba(46 189 148 / 40%);
+
+    --warn: #e0a44a;
+    --warn-soft: #2f2517;
+    --danger: #ef7d6d;
+    --danger-soft: #331d1a;
+    --info: #6db4e5;
+    --info-soft: #16262f;
+    --success: #2ebd94;
+    --success-soft: #14312a;
+
+    --trend-up: #ef7d6d;
+    --trend-down: #2ebd94;
+
+    --chart-1: #2ebd94;
+    --chart-2: #6db4e5;
+    --chart-3: #e0a44a;
+    --chart-4: #b193e8;
+    --chart-5: #ef7d6d;
+    --chart-6: #4ec5cc;
+    --chart-7: #cfba54;
+    --chart-8: #93a4ae;
+    --chart-grid: #29332e;
+    --chart-axis: #6f7d76;
+
+    --overlay: rgb(2 5 4 / 68%);
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow: 0 2px 10px rgb(0 0 0 / 45%);
+    --shadow-lg: 0 14px 36px rgb(0 0 0 / 55%);
+
+    color-scheme: dark;
+  }
+}
+
+/* … und die ausdrückliche Wahl des Nutzers, die immer gewinnt. */
+:root[data-theme='dark'] {
+  --bg: #0e1311;
+  --surface: #161c19;
+  --surface-muted: #1d2521;
+  --surface-hover: #25302b;
+  --border: #29332e;
+  --border-strong: #3b4741;
+
+  --text: #e7eeea;
+  --text-muted: #9aa8a1;
+  --text-subtle: #6f7d76;
+  --text-inverse: #0e1311;
+
+  --accent: #2ebd94;
+  --accent-hover: #46cda6;
+  --accent-fg: #052019;
+  --accent-soft: #14312a;
+  --accent-ring: rgba(46 189 148 / 40%);
+
+  --warn: #e0a44a;
+  --warn-soft: #2f2517;
+  --danger: #ef7d6d;
+  --danger-soft: #331d1a;
+  --info: #6db4e5;
+  --info-soft: #16262f;
+  --success: #2ebd94;
+  --success-soft: #14312a;
+
+  --trend-up: #ef7d6d;
+  --trend-down: #2ebd94;
+
+  --chart-1: #2ebd94;
+  --chart-2: #6db4e5;
+  --chart-3: #e0a44a;
+  --chart-4: #b193e8;
+  --chart-5: #ef7d6d;
+  --chart-6: #4ec5cc;
+  --chart-7: #cfba54;
+  --chart-8: #93a4ae;
+  --chart-grid: #29332e;
+  --chart-axis: #6f7d76;
+
+  --overlay: rgb(2 5 4 / 68%);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow: 0 2px 10px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 14px 36px rgb(0 0 0 / 55%);
+
+  color-scheme: dark;
+}
